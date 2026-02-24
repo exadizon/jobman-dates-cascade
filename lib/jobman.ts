@@ -205,6 +205,8 @@ export async function getRelatedJobs(
 /**
  * Update a job task's target date.
  * Uses: PUT /api/v1/organisations/{orgId}/jobs/{jobId}/tasks/{taskId}/target-date
+ *
+ * Jobman requires: date in Y-m-d format, recalculate_target_dates = "all"
  */
 export async function updateTaskTargetDate(
   jobId: string,
@@ -212,21 +214,24 @@ export async function updateTaskTargetDate(
   newDate: string
 ): Promise<JobTask> {
   const url = orgUrl(`/jobs/${jobId}/tasks/${taskId}/target-date`);
+  // Strip any time portion — Jobman wants Y-m-d only
+  const dateOnly = newDate.split("T")[0];
+
+  const payload = {
+    target_date: dateOnly,
+    recalculate_target_dates: "all",
+  };
+
+  console.log(`[Jobman] PUT target-date ${taskId} → ${dateOnly}`);
   const response = await fetchWithRetry(url, {
     method: "PUT",
     headers: getHeaders(),
-    body: JSON.stringify({ target_date: newDate }),
+    body: JSON.stringify(payload),
   });
 
-  if (response.status === 401) {
-    throw new Error("Invalid or expired API token");
-  }
-  if (response.status === 404) {
-    throw new Error(`Task ${taskId} not found`);
-  }
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(`Failed to update task: ${response.status} — ${errorBody}`);
+    throw new Error(`Failed to update task target date: ${response.status} — ${errorBody}`);
   }
 
   const data = await response.json();
@@ -236,6 +241,8 @@ export async function updateTaskTargetDate(
 /**
  * Update a job task's start date.
  * Uses: PUT /api/v1/organisations/{orgId}/jobs/{jobId}/tasks/{taskId}/start-date
+ *
+ * Jobman requires: date in Y-m-d format, recalculate_target_dates = "all"
  */
 export async function updateTaskStartDate(
   jobId: string,
@@ -243,18 +250,21 @@ export async function updateTaskStartDate(
   newDate: string
 ): Promise<JobTask> {
   const url = orgUrl(`/jobs/${jobId}/tasks/${taskId}/start-date`);
+  // Strip any time portion — Jobman wants Y-m-d only
+  const dateOnly = newDate.split("T")[0];
+
+  const payload = {
+    start_date: dateOnly,
+    recalculate_target_dates: "all",
+  };
+
+  console.log(`[Jobman] PUT start-date ${taskId} → ${dateOnly}`);
   const response = await fetchWithRetry(url, {
     method: "PUT",
     headers: getHeaders(),
-    body: JSON.stringify({ start_date: newDate }),
+    body: JSON.stringify(payload),
   });
 
-  if (response.status === 401) {
-    throw new Error("Invalid or expired API token");
-  }
-  if (response.status === 404) {
-    throw new Error(`Task ${taskId} not found`);
-  }
   if (!response.ok) {
     const errorBody = await response.text();
     throw new Error(`Failed to update task start date: ${response.status} — ${errorBody}`);
