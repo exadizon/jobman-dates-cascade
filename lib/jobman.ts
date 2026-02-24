@@ -1,0 +1,267 @@
+import "server-only";
+
+import type { JobmanJob } from "@/types/jobman";
+
+const API_TOKEN = process.env.JOBMAN_API_TOKEN!;
+const BASE_URL = (
+  process.env.JOBMAN_BASE_URL || "https://api.jobmanapp.com"
+).replace(/\/$/, "");
+const ORG_ID = process.env.JOBMAN_ORGANISATION_ID!;
+
+function getHeaders(): HeadersInit {
+  return {
+    Authorization: `Bearer ${API_TOKEN}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+}
+
+function orgUrl(path: string): string {
+  return `${BASE_URL}/api/v1/organisations/${ORG_ID}${path}`;
+}
+
+/**
+ * Make a fetch request with retry logic for 429 (rate limit).
+ * Max 3 attempts with 1 second delay between retries.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3
+): Promise<Response> {
+  let lastResponse: Response | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const response = await fetch(url, options);
+
+    if (response.status === 429 && attempt < maxRetries - 1) {
+      const retryAfter = response.headers.get("Retry-After");
+      const delayMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      lastResponse = response;
+      continue;
+    }
+
+    return response;
+  }
+
+  return lastResponse!;
+}
+
+/**
+ * Extract the "display name" from a job object.
+ */
+function getJobDisplayName(job: JobmanJob): string {
+  const parts: string[] = [];
+  if (job.number) parts.push(job.number);
+  if (job.description) parts.push(job.description);
+  if (job.name) parts.push(job.name);
+  return parts.join(" — ") || `Job ${job.id.slice(0, 8)}`;
+}
+
+// ─── Job Task Types ──────────────────────────────────────────
+
+export interface JobTask {
+  id: string;
+  name: string;
+  step_id: string;
+  description: string | null;
+  organisation_id: string;
+  item_id: string;
+  status: string;
+  progress: number;
+  start_date: string | null;
+  target_date: string | null;
+  target_date_locked: boolean;
+  target_date_calculation: number;
+  estimated_day: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JobStep {
+  id: string;
+  name: string;
+  organisation_id: string;
+  tasks: JobTask[];
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Public API ──────────────────────────────────────────────
+
+/**
+ * Search jobs by name/number.
+ */
+export async function searchJobs(query: string): Promise<
+  {
+    id: string;
+    number: string;
+    name: string;
+    description: string | null;
+  }[]
+> {
+  const url = orgUrl(`/jobs?search=${encodeURIComponent(query)}&limit=20`);
+  const response = await fetchWithRetry(url, { headers: getHeaders() });
+
+  if (response.status === 401) {
+    throw new Error("Invalid or expired API token");
+  }
+  if (!response.ok) {
+    throw new Error(`Jobman API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const jobs: JobmanJob[] = data.jobs?.data || data.data || [];
+
+  return jobs.map((job) => ({
+    id: job.id,
+    number: job.number,
+    name: getJobDisplayName(job),
+    description: job.description,
+  }));
+}
+
+/**
+ * Get a single job by ID.
+ */
+export async function getJob(id: string): Promise<JobmanJob> {
+  const url = orgUrl(`/jobs/${id}`);
+  const response = await fetchWithRetry(url, { headers: getHeaders() });
+
+  if (response.status === 401) {
+    throw new Error("Invalid or expired API token");
+  }
+  if (response.status === 404) {
+    throw new Error(`Job ${id} not found`);
+  }
+  if (!response.ok) {
+    throw new Error(`Jobman API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.job || data;
+}
+
+/**
+ * Get all steps + tasks for a job.
+ * Uses: GET /api/v1/organisations/{orgId}/jobs/{jobId}/steps
+ * Each step contains nested tasks with start_date and target_date.
+ */
+export async function getJobSteps(jobId: string): Promise<JobStep[]> {
+  const url = orgUrl(`/jobs/${jobId}/steps`);
+  const response = await fetchWithRetry(url, { headers: getHeaders() });
+
+  if (!response.ok) {
+    // Try the /tasks endpoint as fallback
+    const tasksUrl = orgUrl(`/jobs/${jobId}/tasks`);
+    const tasksResponse = await fetchWithRetry(tasksUrl, { headers: getHeaders() });
+    if (!tasksResponse.ok) {
+      throw new Error(`Failed to fetch job tasks: ${response.status}`);
+    }
+    const tasksData = await tasksResponse.json();
+    const tasks: JobTask[] = tasksData.tasks?.data || tasksData.data || [];
+    // Wrap in a single virtual step
+    return [{
+      id: "all-tasks",
+      name: "All Tasks",
+      organisation_id: ORG_ID,
+      tasks,
+      created_at: "",
+      updated_at: "",
+    }];
+  }
+
+  const data = await response.json();
+  return data.steps || data.data || [];
+}
+
+/**
+ * Get related/child jobs.
+ * Finds all jobs with the same contact_id (same client).
+ */
+export async function getRelatedJobs(
+  parentJob: JobmanJob
+): Promise<JobmanJob[]> {
+  if (!parentJob.contact_id) {
+    return [];
+  }
+
+  const filter = JSON.stringify([
+    { property: "contact_id", value: parentJob.contact_id },
+  ]);
+  const url = orgUrl(`/jobs?filter=${encodeURIComponent(filter)}&limit=100`);
+  const response = await fetchWithRetry(url, { headers: getHeaders() });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch related jobs: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const jobs: JobmanJob[] = data.jobs?.data || data.data || [];
+  return jobs.filter((job) => job.id !== parentJob.id);
+}
+
+/**
+ * Update a job task's target date.
+ * Uses: PUT /api/v1/organisations/{orgId}/jobs/{jobId}/tasks/{taskId}/target-date
+ */
+export async function updateTaskTargetDate(
+  jobId: string,
+  taskId: string,
+  newDate: string
+): Promise<JobTask> {
+  const url = orgUrl(`/jobs/${jobId}/tasks/${taskId}/target-date`);
+  const response = await fetchWithRetry(url, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify({ target_date: newDate }),
+  });
+
+  if (response.status === 401) {
+    throw new Error("Invalid or expired API token");
+  }
+  if (response.status === 404) {
+    throw new Error(`Task ${taskId} not found`);
+  }
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to update task: ${response.status} — ${errorBody}`);
+  }
+
+  const data = await response.json();
+  return data.task || data;
+}
+
+/**
+ * Update a job task's start date.
+ * Uses: PUT /api/v1/organisations/{orgId}/jobs/{jobId}/tasks/{taskId}/start-date
+ */
+export async function updateTaskStartDate(
+  jobId: string,
+  taskId: string,
+  newDate: string
+): Promise<JobTask> {
+  const url = orgUrl(`/jobs/${jobId}/tasks/${taskId}/start-date`);
+  const response = await fetchWithRetry(url, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify({ start_date: newDate }),
+  });
+
+  if (response.status === 401) {
+    throw new Error("Invalid or expired API token");
+  }
+  if (response.status === 404) {
+    throw new Error(`Task ${taskId} not found`);
+  }
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to update task start date: ${response.status} — ${errorBody}`);
+  }
+
+  const data = await response.json();
+  return data.task || data;
+}
+
+export { getJobDisplayName };
