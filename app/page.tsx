@@ -47,7 +47,6 @@ interface TaskResult {
 
 function formatDateStr(dateStr: string | null | undefined): string {
   if (!dateStr) return "—";
-  // Handle ISO timestamps and plain dates
   const cleaned = dateStr.includes("T") ? dateStr.split("T")[0] : dateStr;
   const d = new Date(cleaned + "T00:00:00Z");
   return d.toLocaleDateString("en-AU", {
@@ -85,7 +84,104 @@ function formatOffset(days: number): string {
   return `${sign}${absDays} day${absDays === 1 ? "" : "s"}`;
 }
 
-// ─── Component ────────────────────────────────────────────────
+// ─── Inline Task Date Editor ──────────────────────────────────
+
+function TaskDateCell({
+  date,
+  dateType,
+  jobId,
+  taskId,
+  onDateUpdated,
+}: {
+  date: string | null;
+  dateType: "target" | "start";
+  jobId: string;
+  taskId: string;
+  onDateUpdated: (taskId: string, dateType: "target" | "start", newDate: string) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(dateToYMD(date) || "");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!editValue) return;
+    setIsSaving(true);
+    try {
+      const payload: Record<string, string> = {};
+      payload[dateType === "target" ? "targetDate" : "startDate"] = editValue;
+
+      const res = await fetch("/api/jobman/task-date", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, taskId, ...payload }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        onDateUpdated(taskId, dateType, editValue);
+        setIsEditing(false);
+      } else {
+        alert(data.error || "Failed to save date");
+      }
+    } catch {
+      alert("Failed to save date");
+    }
+    setIsSaving(false);
+  };
+
+  if (isEditing) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          type="date"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          className="rounded border px-1.5 py-0.5 text-xs outline-none"
+          style={{
+            background: "var(--color-surface)",
+            borderColor: "var(--color-border)",
+            color: "var(--color-text)",
+          }}
+          autoFocus
+        />
+        <button
+          onClick={handleSave}
+          disabled={isSaving || !editValue}
+          className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white disabled:opacity-50"
+          style={{ background: "var(--color-success)" }}
+        >
+          {isSaving ? "…" : "✓"}
+        </button>
+        <button
+          onClick={() => setIsEditing(false)}
+          className="rounded px-1.5 py-0.5 text-[10px] font-bold"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          ✕
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => {
+        setEditValue(dateToYMD(date) || "");
+        setIsEditing(true);
+      }}
+      className="group flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium transition-colors"
+      style={{
+        background: date ? "var(--color-primary-light)" : "var(--color-surface-alt)",
+        color: date ? "var(--color-primary)" : "var(--color-text-muted)",
+      }}
+      title={`Click to ${date ? "edit" : "set"} ${dateType} date`}
+    >
+      {date ? formatDateStr(date) : "Set date"}
+      <span className="text-[10px] opacity-0 group-hover:opacity-60 transition-opacity">✎</span>
+    </button>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────
 
 export default function Home() {
   // Search state
@@ -100,7 +196,7 @@ export default function Home() {
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
   // Date cascade state
-  const [referenceDate, setReferenceDate] = useState(""); // The "current" reference
+  const [referenceDate, setReferenceDate] = useState("");
   const [newDate, setNewDate] = useState("");
   const [offsetDays, setOffsetDays] = useState(0);
 
@@ -118,7 +214,6 @@ export default function Home() {
   const searchTimeout = useRef<NodeJS.Timeout | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -129,19 +224,42 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  // Find the earliest target_date across all tasks to use as reference
+  // Find earliest target_date
   function findEarliestDate(jobs: JobWithTasks[]): string | null {
     let earliest: string | null = null;
     for (const job of jobs) {
       for (const task of job.tasks) {
         const td = dateToYMD(task.target_date);
-        if (td && (!earliest || td < earliest)) {
-          earliest = td;
-        }
+        if (td && (!earliest || td < earliest)) earliest = td;
       }
     }
     return earliest;
   }
+
+  // Handle inline date update — update local state
+  const handleTaskDateUpdated = useCallback(
+    (taskId: string, dateType: "target" | "start", newDate: string) => {
+      const updateTasks = (jobs: JobWithTasks[]) =>
+        jobs.map((job) => ({
+          ...job,
+          tasks: job.tasks.map((t) =>
+            t.id === taskId
+              ? {
+                  ...t,
+                  [dateType === "target" ? "target_date" : "start_date"]: newDate,
+                }
+              : t
+          ),
+        }));
+
+      if (parentJob) {
+        const updated = updateTasks([parentJob]);
+        setParentJob(updated[0]);
+      }
+      setRelatedJobs((prev) => updateTasks(prev));
+    },
+    [parentJob]
+  );
 
   // Debounced search
   const handleSearch = useCallback((query: string) => {
@@ -184,6 +302,7 @@ export default function Home() {
     setOffsetDays(0);
     setReferenceDate("");
     setCascadeResults(null);
+    setCascadeSummary(null);
 
     try {
       const res = await fetch(`/api/jobman/jobs/${job.id}`);
@@ -193,13 +312,9 @@ export default function Home() {
       } else {
         setParentJob(data.parent);
         setRelatedJobs(data.relatedJobs || []);
-
-        // Auto-set reference date to earliest task date
         const allJobs = [data.parent, ...(data.relatedJobs || [])];
         const earliest = findEarliestDate(allJobs);
-        if (earliest) {
-          setReferenceDate(earliest);
-        }
+        if (earliest) setReferenceDate(earliest);
       }
     } catch {
       setError("Failed to load job details.");
@@ -207,41 +322,25 @@ export default function Home() {
     setIsLoadingDetails(false);
   }, []);
 
-  // Handle new date change
   const handleNewDateChange = useCallback(
     (value: string) => {
       setNewDate(value);
-      if (referenceDate && value) {
-        setOffsetDays(calculateOffset(referenceDate, value));
-      } else {
-        setOffsetDays(0);
-      }
+      if (referenceDate && value) setOffsetDays(calculateOffset(referenceDate, value));
+      else setOffsetDays(0);
     },
     [referenceDate]
   );
 
-  // Handle reference date change
   const handleReferenceDateChange = useCallback(
     (value: string) => {
       setReferenceDate(value);
-      if (value && newDate) {
-        setOffsetDays(calculateOffset(value, newDate));
-      } else {
-        setOffsetDays(0);
-      }
+      if (value && newDate) setOffsetDays(calculateOffset(value, newDate));
+      else setOffsetDays(0);
     },
     [newDate]
   );
 
-  // Collect all tasks with dates for the cascade
-  function getTasksForCascade(): {
-    jobId: string;
-    jobName: string;
-    taskId: string;
-    taskName: string;
-    currentTargetDate: string | null;
-    currentStartDate: string | null;
-  }[] {
+  function getTasksForCascade() {
     const allJobs = parentJob ? [parentJob, ...relatedJobs] : [];
     const tasks: {
       jobId: string;
@@ -251,7 +350,6 @@ export default function Home() {
       currentTargetDate: string | null;
       currentStartDate: string | null;
     }[] = [];
-
     for (const job of allJobs) {
       for (const task of job.tasks) {
         const td = dateToYMD(task.target_date);
@@ -271,14 +369,11 @@ export default function Home() {
     return tasks;
   }
 
-  // Apply cascade
   const handleCascade = useCallback(async () => {
     if (offsetDays === 0) return;
     setIsCascading(true);
     setError(null);
-
     const tasks = getTasksForCascade();
-
     try {
       const res = await fetch("/api/jobman/cascade", {
         method: "POST",
@@ -286,9 +381,8 @@ export default function Home() {
         body: JSON.stringify({ offsetDays, tasks }),
       });
       const data = await res.json();
-      if (data.error) {
-        setError(data.error);
-      } else {
+      if (data.error) setError(data.error);
+      else {
         setCascadeResults(data.results);
         setCascadeSummary(data.summary);
       }
@@ -299,7 +393,6 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offsetDays, parentJob, relatedJobs]);
 
-  // Reset
   const handleReset = () => {
     setSearchQuery("");
     setSearchResults([]);
@@ -316,7 +409,7 @@ export default function Home() {
   // Computed
   const allJobs = parentJob ? [parentJob, ...relatedJobs] : [];
   const allTasks = allJobs.flatMap((j) =>
-    j.tasks.map((t) => ({ ...t, jobName: j.name, jobNumber: j.number }))
+    j.tasks.map((t) => ({ ...t, jobName: j.name, jobNumber: j.number, jobId: j.id }))
   );
   const tasksWithDates = allTasks.filter((t) => t.target_date || t.start_date);
   const tasksWithoutDates = allTasks.filter((t) => !t.target_date && !t.start_date);
@@ -334,27 +427,16 @@ export default function Home() {
       >
         <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-white text-sm font-bold"
-              style={{ background: "var(--color-primary)" }}
-            >
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg text-white text-sm font-bold" style={{ background: "var(--color-primary)" }}>
               JM
             </div>
             <div>
-              <h1 className="text-lg font-semibold tracking-tight" style={{ color: "var(--color-text)" }}>
-                Date Cascade
-              </h1>
-              <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-                Jobman Task Date Tool
-              </p>
+              <h1 className="text-lg font-semibold tracking-tight" style={{ color: "var(--color-text)" }}>Date Cascade</h1>
+              <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>Jobman Task Date Tool</p>
             </div>
           </div>
           {parentJob && !cascadeResults && (
-            <button
-              onClick={handleReset}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors hover:opacity-80"
-              style={{ color: "var(--color-text-secondary)", background: "var(--color-surface-alt)" }}
-            >
+            <button onClick={handleReset} className="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors hover:opacity-80" style={{ color: "var(--color-text-secondary)", background: "var(--color-surface-alt)" }}>
               Start Over
             </button>
           )}
@@ -364,10 +446,7 @@ export default function Home() {
       <main className="mx-auto max-w-4xl px-6 py-8">
         {/* Error Banner */}
         {error && (
-          <div
-            className="mb-6 flex items-start gap-3 rounded-xl border px-4 py-3 fade-in"
-            style={{ background: "var(--color-danger-light)", borderColor: "var(--color-danger)" }}
-          >
+          <div className="mb-6 flex items-start gap-3 rounded-xl border px-4 py-3 fade-in" style={{ background: "var(--color-danger-light)", borderColor: "var(--color-danger)" }}>
             <span className="mt-0.5 text-lg">⚠️</span>
             <p className="flex-1 text-sm font-medium" style={{ color: "var(--color-danger)" }}>{error}</p>
             <button onClick={() => setError(null)} className="text-sm opacity-60 hover:opacity-100" style={{ color: "var(--color-danger)" }}>✕</button>
@@ -395,11 +474,7 @@ export default function Home() {
               <div className="absolute z-40 mt-2 w-full rounded-xl border shadow-xl fade-in" style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}>
                 <div className="max-h-64 overflow-y-auto py-1">
                   {searchResults.map((job) => (
-                    <button
-                      key={job.id}
-                      onClick={() => handleSelectJob(job)}
-                      className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors"
-                      style={{ color: "var(--color-text)" }}
+                    <button key={job.id} onClick={() => handleSelectJob(job)} className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors" style={{ color: "var(--color-text)" }}
                       onMouseOver={(e) => (e.currentTarget.style.background = "var(--color-surface-alt)")}
                       onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
                     >
@@ -433,6 +508,9 @@ export default function Home() {
         {parentJob && !isLoadingDetails && !cascadeResults && (
           <section className="mb-8 slide-up">
             <StepHeader step={2} label="Job Tasks & Current Dates" />
+            <p className="mb-3 text-xs" style={{ color: "var(--color-text-muted)" }}>
+              💡 Click any date cell to set or edit a date directly on Jobman.
+            </p>
             <div className="space-y-4">
               {allJobs.map((job) => (
                 <div key={job.id} className="rounded-xl border" style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}>
@@ -468,10 +546,22 @@ export default function Home() {
                               <td className="py-2 pr-4 font-medium" style={{ color: "var(--color-text)" }}>{task.name}</td>
                               <td className="py-2 pr-4 text-xs" style={{ color: "var(--color-text-muted)" }}>{task.stepName || "—"}</td>
                               <td className="py-2 pr-4">
-                                <DateBadge date={task.target_date} />
+                                <TaskDateCell
+                                  date={task.target_date}
+                                  dateType="target"
+                                  jobId={job.id}
+                                  taskId={task.id}
+                                  onDateUpdated={handleTaskDateUpdated}
+                                />
                               </td>
                               <td className="py-2">
-                                <DateBadge date={task.start_date} />
+                                <TaskDateCell
+                                  date={task.start_date}
+                                  dateType="start"
+                                  jobId={job.id}
+                                  taskId={task.id}
+                                  onDateUpdated={handleTaskDateUpdated}
+                                />
                               </td>
                             </tr>
                           ))}
@@ -502,10 +592,7 @@ export default function Home() {
                   <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
                     Reference date (current)
                   </label>
-                  <input
-                    type="date"
-                    value={referenceDate}
-                    onChange={(e) => handleReferenceDateChange(e.target.value)}
+                  <input type="date" value={referenceDate} onChange={(e) => handleReferenceDateChange(e.target.value)}
                     className="w-full rounded-lg border px-3 py-2.5 text-sm outline-none transition-all focus:ring-2"
                     style={{ background: "var(--color-surface)", borderColor: "var(--color-border)", color: "var(--color-text)" }}
                   />
@@ -515,27 +602,17 @@ export default function Home() {
                   <label className="mb-1.5 block text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
                     New target date
                   </label>
-                  <input
-                    type="date"
-                    value={newDate}
-                    onChange={(e) => handleNewDateChange(e.target.value)}
+                  <input type="date" value={newDate} onChange={(e) => handleNewDateChange(e.target.value)}
                     className="w-full rounded-lg border px-3 py-2.5 text-sm outline-none transition-all focus:ring-2"
                     style={{ background: "var(--color-surface)", borderColor: "var(--color-border)", color: "var(--color-text)" }}
                   />
                 </div>
               </div>
 
-              {/* Offset Display */}
               {referenceDate && newDate && (
                 <div className="mt-4 fade-in">
                   {offsetDays !== 0 ? (
-                    <div
-                      className="flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold"
-                      style={{
-                        background: offsetDays > 0 ? "var(--color-primary-light)" : "var(--color-warning-light)",
-                        color: offsetDays > 0 ? "var(--color-primary)" : "var(--color-warning)",
-                      }}
-                    >
+                    <div className="flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold" style={{ background: offsetDays > 0 ? "var(--color-primary-light)" : "var(--color-warning-light)", color: offsetDays > 0 ? "var(--color-primary)" : "var(--color-warning)" }}>
                       <span className="text-lg">{offsetDays > 0 ? "→" : "←"}</span>
                       Shifting all task dates by {formatOffset(offsetDays)}
                     </div>
@@ -590,7 +667,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Warning + Confirm */}
               <div className="border-t px-5 py-4" style={{ borderColor: "var(--color-border)" }}>
                 <div className="mb-4 flex items-start gap-3 rounded-lg border px-4 py-3" style={{ background: "var(--color-warning-light)", borderColor: "var(--color-warning)" }}>
                   <span className="mt-0.5 text-lg">⚠️</span>
@@ -599,18 +675,12 @@ export default function Home() {
                     <strong>{allJobs.length}</strong> job{allJobs.length > 1 ? "s" : ""}. This action <strong>cannot be undone</strong>.
                   </p>
                 </div>
-
-                <button
-                  onClick={handleCascade}
-                  disabled={!canCascade}
+                <button onClick={handleCascade} disabled={!canCascade}
                   className="w-full rounded-xl px-6 py-3 text-sm font-semibold text-white transition-all hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
                   style={{ background: canCascade ? "var(--color-primary)" : "var(--color-text-muted)" }}
                 >
                   {isCascading ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Spinner />
-                      Updating tasks...
-                    </span>
+                    <span className="flex items-center justify-center gap-2"><Spinner /> Updating tasks...</span>
                   ) : (
                     `Apply Date Cascade — ${formatOffset(offsetDays)} to ${tasksWithDates.length} tasks`
                   )}
@@ -627,46 +697,36 @@ export default function Home() {
               <span className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: cascadeSummary.failed === 0 ? "var(--color-success)" : "var(--color-warning)" }}>✓</span>
               <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: "var(--color-text-secondary)" }}>Results</h2>
             </div>
-
             <div className="rounded-xl border" style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}>
               <div className="border-b px-5 py-4" style={{ borderColor: "var(--color-border)", background: cascadeSummary.failed === 0 ? "var(--color-success-light)" : "var(--color-warning-light)" }}>
                 <p className="text-lg font-semibold" style={{ color: cascadeSummary.failed === 0 ? "var(--color-success)" : "var(--color-warning)" }}>
-                  {cascadeSummary.success} of {cascadeSummary.total} tasks updated successfully
+                  {cascadeSummary.success} of {cascadeSummary.total} tasks updated
                 </p>
                 {cascadeSummary.failed > 0 && (
                   <p className="mt-1 text-sm" style={{ color: "var(--color-danger)" }}>
-                    {cascadeSummary.failed} task{cascadeSummary.failed > 1 ? "s" : ""} failed — see details below.
+                    {cascadeSummary.failed} failed — see below.
                   </p>
                 )}
               </div>
-
               <div className="px-5 py-4 space-y-2">
                 {cascadeResults.map((r) => (
                   <div key={r.taskId} className="flex items-start gap-3 rounded-lg border px-4 py-3" style={{ borderColor: "var(--color-border)", background: r.success ? "var(--color-success-light)" : "var(--color-danger-light)" }}>
                     <span className="mt-0.5 text-lg">{r.success ? "✅" : "❌"}</span>
                     <div>
                       <p className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-                        {r.taskName}
-                        <span className="ml-2 text-xs font-normal" style={{ color: "var(--color-text-muted)" }}>({r.jobName})</span>
+                        {r.taskName} <span className="ml-1 text-xs font-normal" style={{ color: "var(--color-text-muted)" }}>({r.jobName})</span>
                       </p>
                       {r.success && r.previousTargetDate && r.newTargetDate && (
-                        <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
-                          Target: {formatDateStr(r.previousTargetDate)} → {formatDateStr(r.newTargetDate)}
-                        </p>
+                        <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>Target: {formatDateStr(r.previousTargetDate)} → {formatDateStr(r.newTargetDate)}</p>
                       )}
                       {r.success && r.previousStartDate && r.newStartDate && (
-                        <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
-                          Start: {formatDateStr(r.previousStartDate)} → {formatDateStr(r.newStartDate)}
-                        </p>
+                        <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>Start: {formatDateStr(r.previousStartDate)} → {formatDateStr(r.newStartDate)}</p>
                       )}
-                      {!r.success && r.error && (
-                        <p className="mt-0.5 text-xs" style={{ color: "var(--color-danger)" }}>{r.error}</p>
-                      )}
+                      {!r.success && r.error && <p className="mt-0.5 text-xs" style={{ color: "var(--color-danger)" }}>{r.error}</p>}
                     </div>
                   </div>
                 ))}
               </div>
-
               <div className="border-t px-5 py-4" style={{ borderColor: "var(--color-border)" }}>
                 <button onClick={handleReset} className="w-full rounded-xl px-6 py-3 text-sm font-semibold text-white transition-all hover:shadow-lg" style={{ background: "var(--color-primary)" }}>
                   Start Over
@@ -693,33 +753,14 @@ export default function Home() {
   );
 }
 
-// ─── Reusable Sub-Components ──────────────────────────────────
+// ─── Shared Sub-Components ────────────────────────────────────
 
 function StepHeader({ step, label }: { step: number; label: string }) {
   return (
     <div className="mb-3 flex items-center gap-2">
-      <span className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: "var(--color-primary)" }}>
-        {step}
-      </span>
-      <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: "var(--color-text-secondary)" }}>
-        {label}
-      </h2>
+      <span className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: "var(--color-primary)" }}>{step}</span>
+      <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: "var(--color-text-secondary)" }}>{label}</h2>
     </div>
-  );
-}
-
-function DateBadge({ date }: { date: string | null }) {
-  if (!date) {
-    return (
-      <span className="rounded-md px-2 py-0.5 text-xs font-medium" style={{ background: "var(--color-surface-alt)", color: "var(--color-text-muted)" }}>
-        —
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-md px-2 py-0.5 text-xs font-medium" style={{ background: "var(--color-primary-light)", color: "var(--color-primary)" }}>
-      {formatDateStr(date)}
-    </span>
   );
 }
 
