@@ -88,6 +88,21 @@ export interface JobStep {
   updated_at: string;
 }
 
+export type RecalculateDirection = "all" | "after" | "before" | "none";
+
+/**
+ * Given a parent job number (e.g., "0177"), return only work orders
+ * from the related jobs list — i.e. jobs whose number starts with
+ * the parent number followed by a dot (e.g., "0177.1", "0177.2").
+ */
+export function filterWorkOrders(
+  parentJobNumber: string,
+  relatedJobs: JobmanJob[]
+): JobmanJob[] {
+  const prefix = parentJobNumber + ".";
+  return relatedJobs.filter((job) => job.number.startsWith(prefix));
+}
+
 // ─── Public API ──────────────────────────────────────────────
 
 /**
@@ -211,7 +226,8 @@ export async function getRelatedJobs(
 export async function updateTaskTargetDate(
   jobId: string,
   taskId: string,
-  newDate: string
+  newDate: string,
+  direction: RecalculateDirection = "all"
 ): Promise<JobTask> {
   const url = orgUrl(`/jobs/${jobId}/tasks/${taskId}/target-date`);
   // Strip any time portion — Jobman wants Y-m-d only
@@ -219,7 +235,8 @@ export async function updateTaskTargetDate(
 
   const payload = {
     target_date: dateOnly,
-    recalculate_target_dates: "all",
+    recalculate_target_dates: direction,
+    ignore_capacity_constraints: true,
   };
 
   console.log(`[Jobman] PUT target-date ${taskId} → ${dateOnly}`);
@@ -247,7 +264,8 @@ export async function updateTaskTargetDate(
 export async function updateTaskStartDate(
   jobId: string,
   taskId: string,
-  newDate: string
+  newDate: string,
+  direction: RecalculateDirection = "all"
 ): Promise<JobTask> {
   const url = orgUrl(`/jobs/${jobId}/tasks/${taskId}/start-date`);
   // Strip any time portion — Jobman wants Y-m-d only
@@ -255,7 +273,8 @@ export async function updateTaskStartDate(
 
   const payload = {
     start_date: dateOnly,
-    recalculate_target_dates: "all",
+    recalculate_target_dates: direction,
+    ignore_capacity_constraints: true,
   };
 
   console.log(`[Jobman] PUT start-date ${taskId} → ${dateOnly}`);
