@@ -455,7 +455,7 @@ function CalendarContent() {
               Debug {showDebug ? "▲" : "▼"}
             </button>
           )}
-          <Link href="/" className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50 transition-colors">
+          <Link href="/cascade" className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50 transition-colors">
             Cascade Tool
           </Link>
         </div>
