@@ -4,6 +4,7 @@ import {
   getJobSteps,
   getRelatedJobs,
   updateTaskStartDate,
+  updateTaskTargetDate,
   filterWorkOrders,
 } from "@/lib/jobman";
 import type { JobTask } from "@/lib/jobman";
@@ -60,25 +61,27 @@ export async function POST(request: NextRequest) {
   const results: CascadeStepResult[] = [];
 
   try {
-    // ─── Step 1: Reverse cascade from anchor (Primary Install) ───
-    console.log(`[SmartCascade] Step 1: Reverse cascade from anchor task ${anchorTaskId}`);
+    // ─── Step 1a: Pin anchor task to the dropped date (no cascade yet) ───
+    // Using direction "none" so Jobman doesn't shift the anchor itself when
+    // recalculating preceding tasks — that was causing the off-by-one-day bug.
+    console.log(`[SmartCascade] Step 1a: Pin anchor task ${anchorTaskId} start_date = ${newStartDate} (no cascade)`);
 
     let step1Result: CascadeStepResult;
     try {
-      await updateTaskStartDate(jobId, anchorTaskId, newStartDate, "before");
+      await updateTaskStartDate(jobId, anchorTaskId, newStartDate, "none");
       step1Result = {
         step: 1,
-        description: "Reverse cascade from anchor task (all tasks before)",
+        description: "Pin anchor task start date (no cascade)",
         success: true,
         jobId,
         taskId: anchorTaskId,
         dateSet: newStartDate,
-        direction: "before",
+        direction: "none",
       };
     } catch (error) {
       step1Result = {
         step: 1,
-        description: "Reverse cascade from anchor task",
+        description: "Pin anchor task start date",
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       };
@@ -90,6 +93,48 @@ export async function POST(request: NextRequest) {
         steps: results,
         summary: { total: 1, success: 0, failed: 1 },
       });
+    }
+
+    // ─── Step 1b: Reverse cascade from the task immediately before the anchor ───
+    // Fetch current task list so we know what's before the anchor.
+    const preSteps = await getJobSteps(jobId);
+    const preTaskList: JobTask[] = preSteps.flatMap((s) => s.tasks || []);
+    const preAnchorIndex = preTaskList.findIndex((t) => t.id === anchorTaskId);
+    const taskBefore = preAnchorIndex > 0 ? preTaskList[preAnchorIndex - 1] : null;
+
+    if (taskBefore) {
+      // Target date of the task before = one day before the anchor's start date
+      const anchorDate = new Date(newStartDate + "T00:00:00");
+      anchorDate.setDate(anchorDate.getDate() - 1);
+      const dayBefore =
+        anchorDate.getFullYear() +
+        "-" +
+        String(anchorDate.getMonth() + 1).padStart(2, "0") +
+        "-" +
+        String(anchorDate.getDate()).padStart(2, "0");
+
+      console.log(`[SmartCascade] Step 1b: Reverse cascade from "${taskBefore.name}" with target_date = ${dayBefore}`);
+
+      try {
+        await updateTaskTargetDate(jobId, taskBefore.id, dayBefore, "before");
+        results.push({
+          step: 1,
+          description: `Reverse cascade from "${taskBefore.name}" (all tasks before)`,
+          success: true,
+          jobId,
+          taskId: taskBefore.id,
+          taskName: taskBefore.name,
+          dateSet: dayBefore,
+          direction: "before",
+        });
+      } catch (error) {
+        results.push({
+          step: 1,
+          description: `Reverse cascade from "${taskBefore.name}"`,
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
     }
 
     // ─── Step 2: Forward cascade from next task (Install QA) ───

@@ -22,12 +22,13 @@ function orgUrl(path: string): string {
 
 /**
  * Make a fetch request with retry logic for 429 (rate limit).
- * Max 3 attempts with 1 second delay between retries.
+ * Max 5 attempts with exponential back-off (1s, 2s, 4s…) between retries.
+ * Respects the Retry-After header when present.
  */
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  maxRetries = 3
+  maxRetries = 5
 ): Promise<Response> {
   let lastResponse: Response | null = null;
 
@@ -36,7 +37,10 @@ async function fetchWithRetry(
 
     if (response.status === 429 && attempt < maxRetries - 1) {
       const retryAfter = response.headers.get("Retry-After");
-      const delayMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000;
+      // Exponential back-off: 1s, 2s, 4s, 8s…  capped at 10s
+      const baseDelay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000;
+      const delayMs = Math.min(baseDelay * Math.pow(2, attempt), 10_000);
+      console.log(`[Jobman] 429 rate-limited, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       lastResponse = response;
       continue;
@@ -135,6 +139,55 @@ export async function searchJobs(query: string): Promise<
     name: getJobDisplayName(job),
     description: job.description,
   }));
+}
+
+/**
+ * Fetch recent jobs without a search term — returns the most recently
+ * updated jobs for this organisation, up to `limit`.
+ * Tries multiple sort/param variants for compatibility across Jobman instances.
+ */
+export async function getRecentJobs(limit = 20): Promise<
+  {
+    id: string;
+    number: string;
+    name: string;
+    description: string | null;
+  }[]
+> {
+  // Try with a sort-by-updated param first, fall back to plain limit
+  const candidates = [
+    orgUrl(`/jobs?limit=${limit}&sort_by=updated_at&sort_direction=desc`),
+    orgUrl(`/jobs?limit=${limit}`),
+  ];
+
+  let lastError: Error | null = null;
+
+  for (const url of candidates) {
+    const response = await fetchWithRetry(url, { headers: getHeaders() });
+
+    if (response.status === 401) {
+      throw new Error("Invalid or expired API token");
+    }
+
+    if (!response.ok) {
+      lastError = new Error(`Jobman API error: ${response.status} ${response.statusText}`);
+      continue; // try next variant
+    }
+
+    const data = await response.json();
+    const jobs: JobmanJob[] = data.jobs?.data || data.data || [];
+
+    if (jobs.length > 0 || !lastError) {
+      return jobs.map((job) => ({
+        id: job.id,
+        number: job.number,
+        name: getJobDisplayName(job),
+        description: job.description,
+      }));
+    }
+  }
+
+  throw lastError ?? new Error("No jobs returned from Jobman API");
 }
 
 /**
