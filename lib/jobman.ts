@@ -1,16 +1,17 @@
 import "server-only";
 
 import type { JobmanJob } from "@/types/jobman";
+import { getAccessToken } from "./oauth-tokens";
 
-const API_TOKEN = process.env.JOBMAN_API_TOKEN!;
 const BASE_URL = (
   process.env.JOBMAN_BASE_URL || "https://api.jobmanapp.com"
 ).replace(/\/$/, "");
 const ORG_ID = process.env.JOBMAN_ORGANISATION_ID!;
 
-function getHeaders(): HeadersInit {
+async function getHeaders(): Promise<HeadersInit> {
+  const token = await getAccessToken();
   return {
-    Authorization: `Bearer ${API_TOKEN}`,
+    Authorization: `Bearer ${token}`,
     Accept: "application/json",
     "Content-Type": "application/json",
   };
@@ -121,7 +122,7 @@ export async function searchJobs(query: string): Promise<
   }[]
 > {
   const url = orgUrl(`/jobs?search=${encodeURIComponent(query)}&limit=20`);
-  const response = await fetchWithRetry(url, { headers: getHeaders() });
+  const response = await fetchWithRetry(url, { headers: await getHeaders() });
 
   if (response.status === 401) {
     throw new Error("Invalid or expired API token");
@@ -163,7 +164,7 @@ export async function getRecentJobs(limit = 20): Promise<
   let lastError: Error | null = null;
 
   for (const url of candidates) {
-    const response = await fetchWithRetry(url, { headers: getHeaders() });
+    const response = await fetchWithRetry(url, { headers: await getHeaders() });
 
     if (response.status === 401) {
       throw new Error("Invalid or expired API token");
@@ -195,7 +196,7 @@ export async function getRecentJobs(limit = 20): Promise<
  */
 export async function getJob(id: string): Promise<JobmanJob> {
   const url = orgUrl(`/jobs/${id}`);
-  const response = await fetchWithRetry(url, { headers: getHeaders() });
+  const response = await fetchWithRetry(url, { headers: await getHeaders() });
 
   if (response.status === 401) {
     throw new Error("Invalid or expired API token");
@@ -218,12 +219,12 @@ export async function getJob(id: string): Promise<JobmanJob> {
  */
 export async function getJobSteps(jobId: string): Promise<JobStep[]> {
   const url = orgUrl(`/jobs/${jobId}/steps`);
-  const response = await fetchWithRetry(url, { headers: getHeaders() });
+  const response = await fetchWithRetry(url, { headers: await getHeaders() });
 
   if (!response.ok) {
     // Try the /tasks endpoint as fallback
     const tasksUrl = orgUrl(`/jobs/${jobId}/tasks`);
-    const tasksResponse = await fetchWithRetry(tasksUrl, { headers: getHeaders() });
+    const tasksResponse = await fetchWithRetry(tasksUrl, { headers: await getHeaders() });
     if (!tasksResponse.ok) {
       throw new Error(`Failed to fetch job tasks: ${response.status}`);
     }
@@ -259,7 +260,7 @@ export async function getRelatedJobs(
     { property: "contact_id", value: parentJob.contact_id },
   ]);
   const url = orgUrl(`/jobs?filter=${encodeURIComponent(filter)}&limit=100`);
-  const response = await fetchWithRetry(url, { headers: getHeaders() });
+  const response = await fetchWithRetry(url, { headers: await getHeaders() });
 
   if (!response.ok) {
     throw new Error(`Failed to fetch related jobs: ${response.status}`);
@@ -295,7 +296,7 @@ export async function updateTaskTargetDate(
   console.log(`[Jobman] PUT target-date ${taskId} → ${dateOnly}`);
   const response = await fetchWithRetry(url, {
     method: "PUT",
-    headers: getHeaders(),
+    headers: await getHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -333,7 +334,7 @@ export async function updateTaskStartDate(
   console.log(`[Jobman] PUT start-date ${taskId} → ${dateOnly}`);
   const response = await fetchWithRetry(url, {
     method: "PUT",
-    headers: getHeaders(),
+    headers: await getHeaders(),
     body: JSON.stringify(payload),
   });
 
