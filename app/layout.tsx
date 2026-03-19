@@ -1,16 +1,22 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { DM_Sans, DM_Mono } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
-  variable: "--font-inter",
+const dmSans = DM_Sans({
+  variable: "--font-sans",
   subsets: ["latin"],
+  weight: ["300", "400", "500", "600"],
+});
+
+const dmMono = DM_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
-  title: "Jobman Date Cascade",
-  description:
-    "Cascade date changes across related Jobman jobs in a single click.",
+  title: "Inspire Design — Schedule",
+  description: "Cascade date changes across related Jobman jobs in a single click.",
 };
 
 export default function RootLayout({
@@ -20,7 +26,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} antialiased`}>{children}</body>
+      <body className={`${dmSans.variable} ${dmMono.variable} antialiased`}>{children}</body>
     </html>
   );
 }

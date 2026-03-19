@@ -419,20 +419,25 @@ function CalendarContent() {
   const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
   return (
-    <div className="flex h-screen flex-col bg-white" style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}>
+    <div className="flex h-screen flex-col" style={{ background: "#f7f7f6" }}>
 
       {/* ── Top bar ──────────────────────────────── */}
-      <div className="flex items-center gap-4 px-5 py-3 border-b" style={{ borderColor: "#e5e7eb" }}>
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg text-white text-xs font-bold" style={{ background: "#2563eb" }}>
-            JM
+      <div className="flex items-center gap-4 px-5 py-3 border-b bg-white" style={{ borderColor: "#e4e4e0" }}>
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg text-white text-xs font-semibold tracking-wide" style={{ background: "#454E49" }}>
+            ID
           </div>
-          <span className="font-semibold text-gray-800 text-sm">Schedule</span>
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-semibold" style={{ color: "#1a1c1a" }}>Inspire Design</span>
+            <span className="text-xs" style={{ color: "#9a9e9b" }}>Schedule</span>
+          </div>
         </div>
 
+        <div className="h-5 w-px mx-1" style={{ background: "#e4e4e0" }} />
+
         {/* Search */}
-        <div className="relative ml-2">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="relative">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: "#9a9e9b" }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
           </svg>
           <input
@@ -440,9 +445,14 @@ function CalendarContent() {
             value={searchQuery}
             onChange={(e) => handleSearchInput(e.target.value)}
             placeholder="Search jobs…"
-            className="w-56 rounded-lg border border-gray-200 bg-gray-50 pl-9 pr-4 py-2 text-sm text-gray-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+            className="w-56 rounded-lg pl-9 pr-4 py-2 text-sm outline-none transition-all"
+            style={{
+              background: "#f7f7f6",
+              border: "1px solid #e4e4e0",
+              color: "#1a1c1a",
+            }}
           />
-          {isLoading && <Spinner className="absolute right-3 top-1/2 -translate-y-1/2" />}
+          {isLoading && allJobs.length > 0 && searchQuery.trim().length >= 2 && <Spinner className="absolute right-3 top-1/2 -translate-y-1/2" />}
         </div>
 
         <div className="ml-auto flex items-center gap-2">
@@ -455,33 +465,33 @@ function CalendarContent() {
               Debug {showDebug ? "▲" : "▼"}
             </button>
           )}
-          <Link href="/cascade" className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50 transition-colors">
+          <Link href="/cascade" className="rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-gray-50" style={{ borderColor: "#e4e4e0", color: "#4a4f4b" }}>
             Cascade Tool
           </Link>
         </div>
       </div>
 
       {/* ── Calendar toolbar ──────────────────────── */}
-      <div className="flex items-center gap-3 px-5 py-2.5 border-b" style={{ borderColor: "#e5e7eb" }}>
+      <div className="flex items-center gap-3 px-5 py-2.5 border-b bg-white" style={{ borderColor: "#e4e4e0" }}>
         {/* Month navigation */}
         <div className="flex items-center gap-1">
-          <button onClick={() => navigateMonth(-1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 transition-colors" title="Previous month">
+          <button onClick={() => navigateMonth(-1)} className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-gray-100" style={{ color: "#4a4f4b" }} title="Previous month">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
           </button>
-          <button onClick={goToToday} className="rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors">
+          <button onClick={goToToday} className="rounded-lg border px-3 py-1 text-xs font-medium transition-colors hover:bg-gray-50" style={{ borderColor: "#e4e4e0", color: "#4a4f4b" }}>
             Today
           </button>
-          <button onClick={() => navigateMonth(1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 transition-colors" title="Next month">
+          <button onClick={() => navigateMonth(1)} className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-gray-100" style={{ color: "#4a4f4b" }} title="Next month">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
           </button>
         </div>
 
-        <h2 className="text-base font-semibold text-gray-800 w-44">
+        <h2 className="text-base font-semibold w-44" style={{ color: "#1a1c1a" }}>
           {formatMonthYear(currentMonth)}
         </h2>
 
         {/* Divider */}
-        <div className="h-5 w-px bg-gray-200 mx-1" />
+        <div className="h-5 w-px mx-1" style={{ background: "#e4e4e0" }} />
 
         {/* Task type filters */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -511,11 +521,29 @@ function CalendarContent() {
 
         {/* Job count badge */}
         {allJobs.length > 0 && (
-          <span className="ml-auto text-xs text-gray-400">
-            {filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""} loaded
+          <span className="ml-auto text-xs" style={{ color: "#9a9e9b" }}>
+            {filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}
           </span>
         )}
       </div>
+
+      {/* ── Debug log panel ───────────────────────── */}
+      {debugLog.length > 0 && showDebug && (
+        <div className="mx-5 mt-2 rounded-lg border border-amber-200 bg-amber-50 text-xs">
+          <button
+            onClick={() => setShowDebug((v) => !v)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-amber-800 font-medium hover:bg-amber-100 transition-colors rounded-lg"
+          >
+            <span className="opacity-60">▼</span>
+            API Debug Log ({debugLog.length} lines) — check browser console for full output
+          </button>
+          <div className="border-t border-amber-200 px-3 py-2 font-mono text-amber-900 space-y-0.5 max-h-64 overflow-y-auto">
+            {debugLog.map((line, i) => (
+              <div key={i} className="whitespace-pre-wrap break-all">{line}</div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Error ─────────────────────────────────── */}
       {error && (
@@ -525,25 +553,6 @@ function CalendarContent() {
         </div>
       )}
 
-      {/* ── Debug log panel ───────────────────────── */}
-      {debugLog.length > 0 && (
-        <div className="mx-5 mt-2 rounded-lg border border-amber-200 bg-amber-50 text-xs">
-          <button
-            onClick={() => setShowDebug((v) => !v)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-amber-800 font-medium hover:bg-amber-100 transition-colors rounded-lg"
-          >
-            <span className="opacity-60">{showDebug ? "▼" : "▶"}</span>
-            API Debug Log ({debugLog.length} lines) — check browser console for full output
-          </button>
-          {showDebug && (
-            <div className="border-t border-amber-200 px-3 py-2 font-mono text-amber-900 space-y-0.5 max-h-64 overflow-y-auto">
-              {debugLog.map((line, i) => (
-                <div key={i} className="whitespace-pre-wrap break-all">{line}</div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── Calendar ──────────────────────────────── */}
       <div className="flex-1 overflow-auto relative">
@@ -552,19 +561,19 @@ function CalendarContent() {
           <div className="flex flex-col items-center justify-center py-32 gap-3">
             <Spinner className="h-7 w-7" />
             <div className="text-center">
-              <p className="text-sm font-medium text-gray-600">Fetching jobs from Jobman…</p>
-              <p className="text-xs mt-1 text-gray-400">This may take a few seconds</p>
+              <p className="text-sm font-medium" style={{ color: "#4a4f4b" }}>Fetching jobs from Jobman…</p>
+              <p className="text-xs mt-1" style={{ color: "#9a9e9b" }}>This may take a few seconds</p>
             </div>
           </div>
         )}
 
         {/* Weekday header */}
-        <div className={`grid grid-cols-7 border-b sticky top-0 bg-white z-10 ${isLoading && allJobs.length === 0 ? "hidden" : ""}`} style={{ borderColor: "#e5e7eb" }}>
+        <div className={`grid grid-cols-7 border-b sticky top-0 bg-white z-10 ${isLoading && allJobs.length === 0 ? "hidden" : ""}`} style={{ borderColor: "#e4e4e0" }}>
           {WEEKDAYS.map((day, i) => (
             <div
               key={day}
               className="py-2.5 text-center text-xs font-semibold tracking-wider uppercase"
-              style={{ color: i >= 5 ? "#d1d5db" : "#6b7280" }}
+              style={{ color: i >= 5 ? "#d1d5db" : "#9a9e9b" }}
             >
               {day}
             </div>
@@ -574,7 +583,7 @@ function CalendarContent() {
         {/* Month grid */}
         <div className={isLoading && allJobs.length === 0 ? "hidden" : ""}>
           {weeks.map((week, wi) => (
-            <div key={wi} className="grid grid-cols-7 border-b" style={{ borderColor: "#f3f4f6", minHeight: "120px" }}>
+            <div key={wi} className="grid grid-cols-7 border-b" style={{ borderColor: "#ebebea", minHeight: "120px" }}>
               {week.map((date) => {
                 const dateStr = toYMD(date);
                 const dayEvents = getEventsForDate(dateStr);
@@ -588,18 +597,16 @@ function CalendarContent() {
                     key={dateStr}
                     className="border-r p-1.5 transition-colors relative"
                     style={{
-                      borderColor: "#f3f4f6",
+                      borderColor: "#ebebea",
                       background: isDragOver
-                        ? "#eff6ff"
+                        ? "#edeeed"
                         : isToday
-                          ? "#fafbff"
-                          : weekend && !inMonth
-                            ? "#fafafa"
-                            : weekend
-                              ? "#fafafa"
-                              : inMonth
-                                ? "white"
-                                : "#f9fafb",
+                          ? "#fafaf9"
+                          : weekend
+                            ? "#f7f7f5"
+                            : inMonth
+                              ? "white"
+                              : "#f9f9f8",
                     }}
                     onDragOver={(e) => handleDragOver(e, dateStr)}
                     onDrop={(e) => handleDrop(e, dateStr)}
@@ -607,11 +614,12 @@ function CalendarContent() {
                     {/* Date number */}
                     <div className="flex justify-start mb-1 pl-0.5">
                       <span
-                        className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium"
+                        className="flex h-6 w-6 items-center justify-center rounded-full text-xs"
                         style={{
-                          background: isToday ? "#2563eb" : "transparent",
-                          color: isToday ? "white" : inMonth ? "#374151" : "#d1d5db",
-                          fontWeight: isToday ? 700 : inMonth ? 500 : 400,
+                          background: isToday ? "#454E49" : "transparent",
+                          color: isToday ? "white" : inMonth ? "#1a1c1a" : "#d1d5db",
+                          fontWeight: isToday ? 600 : inMonth ? 500 : 400,
+                          fontFamily: "var(--font-mono), monospace",
                         }}
                       >
                         {date.getDate()}
@@ -636,7 +644,7 @@ function CalendarContent() {
                             }}
                             title={`${event.displayJobNumber} — ${event.taskName}`}
                           >
-                            <span className="font-bold shrink-0">{event.displayJobNumber}</span>
+                            <span className="shrink-0" style={{ fontFamily: "var(--font-mono), monospace", fontWeight: 500 }}>{event.displayJobNumber}</span>
                             <span className="truncate opacity-75">{cfg.label}</span>
                           </div>
                         );
@@ -645,7 +653,7 @@ function CalendarContent() {
 
                     {/* Drag-over indicator */}
                     {isDragOver && (
-                      <div className="absolute inset-0 rounded border-2 border-blue-400 pointer-events-none" />
+                      <div className="absolute inset-0 rounded border-2 pointer-events-none" style={{ borderColor: "#454E49" }} />
                     )}
                   </div>
                 );
@@ -656,20 +664,20 @@ function CalendarContent() {
 
         {/* Empty state (after load) */}
         {!isLoading && allJobs.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-24 text-gray-400">
-            <svg className="h-12 w-12 mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="flex flex-col items-center justify-center py-24 gap-3">
+            <svg className="h-10 w-10 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: "#454E49" }}>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
             {requiresSearch ? (
-              <>
-                <p className="text-sm font-medium text-gray-500">Search for a job to get started</p>
-                <p className="text-xs mt-1">Type a job number or name in the search box above</p>
-              </>
+              <div className="text-center">
+                <p className="text-sm font-medium" style={{ color: "#4a4f4b" }}>Search for a job to get started</p>
+                <p className="text-xs mt-1" style={{ color: "#9a9e9b" }}>Type a job number or name above</p>
+              </div>
             ) : (
-              <>
-                <p className="text-sm font-medium">No jobs found</p>
-                <p className="text-xs mt-1">Try a different search or check your API connection</p>
-              </>
+              <div className="text-center">
+                <p className="text-sm font-medium" style={{ color: "#4a4f4b" }}>No jobs found</p>
+                <p className="text-xs mt-1" style={{ color: "#9a9e9b" }}>Try a different search or check your API connection</p>
+              </div>
             )}
           </div>
         )}
@@ -759,7 +767,7 @@ function Modal({ children }: { children: React.ReactNode }) {
 
 function Spinner({ className = "h-4 w-4" }: { className?: string }) {
   return (
-    <svg className={`animate-spin text-blue-500 ${className}`} fill="none" viewBox="0 0 24 24">
+    <svg className={`animate-spin ${className}`} style={{ color: "#454E49" }} fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
