@@ -546,9 +546,20 @@ function CalendarContent() {
       )}
 
       {/* ── Calendar ──────────────────────────────── */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto relative">
+        {/* ── Initial loading state ── */}
+        {isLoading && allJobs.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-32 gap-3">
+            <Spinner className="h-7 w-7" />
+            <div className="text-center">
+              <p className="text-sm font-medium text-gray-600">Fetching jobs from Jobman…</p>
+              <p className="text-xs mt-1 text-gray-400">This may take a few seconds</p>
+            </div>
+          </div>
+        )}
+
         {/* Weekday header */}
-        <div className="grid grid-cols-7 border-b sticky top-0 bg-white z-10" style={{ borderColor: "#e5e7eb" }}>
+        <div className={`grid grid-cols-7 border-b sticky top-0 bg-white z-10 ${isLoading && allJobs.length === 0 ? "hidden" : ""}`} style={{ borderColor: "#e5e7eb" }}>
           {WEEKDAYS.map((day, i) => (
             <div
               key={day}
@@ -561,7 +572,7 @@ function CalendarContent() {
         </div>
 
         {/* Month grid */}
-        <div>
+        <div className={isLoading && allJobs.length === 0 ? "hidden" : ""}>
           {weeks.map((week, wi) => (
             <div key={wi} className="grid grid-cols-7 border-b" style={{ borderColor: "#f3f4f6", minHeight: "120px" }}>
               {week.map((date) => {
@@ -746,9 +757,9 @@ function Modal({ children }: { children: React.ReactNode }) {
 
 // ─── Spinner ──────────────────────────────────────────────────
 
-function Spinner({ className = "" }: { className?: string }) {
+function Spinner({ className = "h-4 w-4" }: { className?: string }) {
   return (
-    <svg className={`h-4 w-4 animate-spin text-blue-500 ${className}`} fill="none" viewBox="0 0 24 24">
+    <svg className={`animate-spin text-blue-500 ${className}`} fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>

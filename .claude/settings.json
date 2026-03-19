@@ -6,7 +6,12 @@
       "Bash(curl:*)",
       "Bash(pkill:*)",
       "Bash(netstat:*)",
-      "Bash(ss:*)"
+      "Bash(ss:*)",
+      "Bash(source /c/Users/exequel/code/jobman-dates-cascade/.env.local)",
+      "WebFetch(domain:api.jobmanapp.com)",
+      "WebSearch",
+      "WebFetch(domain:docs.jobmanapp.com)",
+      "WebFetch(domain:jobman.com)"
     ]
   }
 }

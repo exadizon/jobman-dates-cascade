@@ -35,9 +35,9 @@ export interface CalendarTask {
 // Data is cached per search key for CACHE_TTL_MS.
 
 const CACHE_TTL_MS = 5 * 60 * 1000;       // 5 minutes
-const DELAY_BETWEEN_JOBS_MS = 400;         // throttle between parent-job fetches
-const DELAY_BETWEEN_WORK_ORDERS_MS = 250;  // throttle between work-order step fetches
-const MAX_PARENT_JOBS = 5;                 // limit parent jobs to reduce API call volume
+const DELAY_BETWEEN_JOBS_MS = 200;         // throttle between parent-job fetches
+const DELAY_BETWEEN_WORK_ORDERS_MS = 150;  // throttle between work-order step fetches
+const MAX_PARENT_JOBS = 20;                // limit parent jobs to reduce API call volume
 const MAX_WORK_ORDERS_PER_JOB = 4;        // cap work orders per parent
 
 interface CacheEntry {
@@ -120,17 +120,14 @@ export async function GET(request: NextRequest) {
       searchResults = await searchJobs(search);
       log(`Search returned ${searchResults.length} result(s): ${searchResults.map(r => r.number).join(", ") || "(none)"}`);
     } else {
-      log("No search query — calling getRecentJobs(40) and prioritising parent jobs…");
+      log("No search query — calling getRecentJobs(100) and prioritising parent jobs with dates…");
       try {
-        // Fetch more than we need so we can prioritise parent jobs over work orders.
-        // Work orders ARE still included — they'll be processed with isWorkOrder=true
-        // (detected via their "X.Y" number format).
-        const all = await getRecentJobs(40);
-        // Sort: parent jobs first (no dot), then work orders — gives 5 parents in the budget
-        searchResults = [
-          ...all.filter(r => !r.number.includes(".")),
-          ...all.filter(r => r.number.includes(".")),
-        ];
+        const all = await getRecentJobs(100);
+        // Sort: parent jobs first (no dot), then work orders
+        // Also prioritise jobs that have due_date/start_date set (likely to have task dates)
+        const parents = all.filter(r => !r.number.includes("."));
+        const workOrders = all.filter(r => r.number.includes("."));
+        searchResults = [...parents, ...workOrders];
         log(`getRecentJobs returned ${all.length} result(s): ${all.map(r => r.number).join(", ") || "(none)"}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -178,6 +175,13 @@ export async function GET(request: NextRequest) {
         log(`  ${job.number} (isWO=${isWorkOrder}) → ${tasks.length} task(s): ${tasks.map(t => `"${t.name}" [start=${t.startDate ?? "null"}, target=${t.targetDate ?? "null"}]`).join("; ") || "(none)"}`);
       } catch (err) {
         log(`  ${job.number} → getJobSteps failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Skip jobs where no tasks have any dates — nothing to show on the calendar
+      const hasDates = tasks.some(t => t.startDate || t.targetDate);
+      if (!hasDates && !isWorkOrder) {
+        log(`  ${job.number} → all tasks have null dates, skipping`);
+        continue;
       }
 
       calendarJobs.push({
