@@ -192,6 +192,46 @@ export async function getRecentJobs(limit = 20): Promise<
 }
 
 /**
+ * Fetch ALL jobs by paginating through the Jobman API.
+ * Stops when a page returns fewer results than the page size.
+ */
+export async function getAllJobs(
+  onProgress?: (fetched: number) => void
+): Promise<{ id: string; number: string; name: string; description: string | null }[]> {
+  const PAGE_SIZE = 50;
+  const all: { id: string; number: string; name: string; description: string | null }[] = [];
+  let page = 1;
+
+  while (true) {
+    const url = orgUrl(`/jobs?limit=${PAGE_SIZE}&page=${page}`);
+    const response = await fetchWithRetry(url, { headers: await getHeaders() });
+
+    if (response.status === 401) throw new Error("Invalid or expired API token");
+    if (!response.ok) throw new Error(`Jobman API error: ${response.status} ${response.statusText}`);
+
+    const data = await response.json();
+    const jobs: JobmanJob[] = data.jobs?.data || data.data || [];
+
+    all.push(...jobs.map((job) => ({
+      id: job.id,
+      number: job.number,
+      name: getJobDisplayName(job),
+      description: job.description,
+    })));
+
+    onProgress?.(all.length);
+
+    if (jobs.length < PAGE_SIZE) break; // last page
+    page++;
+
+    // Small delay between pages to stay under rate limits
+    await new Promise((r) => setTimeout(r, 300));
+  }
+
+  return all;
+}
+
+/**
  * Get a single job by ID.
  */
 export async function getJob(id: string): Promise<JobmanJob> {

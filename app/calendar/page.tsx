@@ -234,9 +234,8 @@ function CalendarContent() {
       }
       if (data.error) {
         setError(data.error);
-      } else if (data.noAutoLoad) {
-        // Jobman API doesn't support listing without a search query
-        setRequiresSearch(true);
+      } else if (data.noCache) {
+        setError("Calendar data is still syncing — please check back in a few minutes, or search for a specific job.");
       } else {
         const jobs = data.jobs || [];
         setAllJobs(jobs);
