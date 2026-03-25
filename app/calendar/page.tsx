@@ -38,6 +38,8 @@ interface CalendarEvent {
   taskName: string;
   taskType: TaskType;
   date: string;       // YYYY-MM-DD — the date this pill appears on
+  /** Which API field this date came from — determines which field to update on drag */
+  dateField: "startDate" | "targetDate";
   targetDate: string | null;
   isWorkOrder: boolean;
 }
@@ -225,7 +227,7 @@ function CalendarContent() {
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
 
   const [cascadeModal, setCascadeModal] = useState<{
-    jobId: string; taskId: string; taskName: string; newDate: string; taskType: TaskType;
+    jobId: string; taskId: string; taskName: string; newDate: string; taskType: TaskType; dateField: "startDate" | "targetDate";
   } | null>(null);
   const [isCascading, setIsCascading] = useState(false);
   const [cascadeResults, setCascadeResults] = useState<CascadeStepResult[] | null>(null);
@@ -377,6 +379,7 @@ function CalendarContent() {
                 taskName: task.name,
                 taskType,
                 date: dayStr,
+                dateField: "startDate",
                 targetDate: task.targetDate,
                 isWorkOrder: job.isWorkOrder,
               });
@@ -389,6 +392,7 @@ function CalendarContent() {
         // Single-day rendering for all other task types
         const date = task.startDate || task.targetDate;
         if (!date) continue;
+        const dateField = task.startDate ? "startDate" : "targetDate";
 
         // Deduplicate: same parent job, same task type, same date → show only once
         const key = `${displayJobNumber}:${taskType}:${date}`;
@@ -404,6 +408,7 @@ function CalendarContent() {
           taskName: task.name,
           taskType,
           date,
+          dateField,
           targetDate: task.targetDate,
           isWorkOrder: job.isWorkOrder,
         });
@@ -452,7 +457,7 @@ function CalendarContent() {
     e.preventDefault();
     setDragOverDate(null);
     if (!draggingEvent || dateStr === draggingEvent.date) { setDraggingEvent(null); return; }
-    setCascadeModal({ jobId: draggingEvent.jobId, taskId: draggingEvent.taskId, taskName: draggingEvent.taskName, newDate: dateStr, taskType: draggingEvent.taskType });
+    setCascadeModal({ jobId: draggingEvent.jobId, taskId: draggingEvent.taskId, taskName: draggingEvent.taskName, newDate: dateStr, taskType: draggingEvent.taskType, dateField: draggingEvent.dateField });
     setDraggingEvent(null);
   }, [draggingEvent]);
   const handleDragEnd = useCallback(() => { setDraggingEvent(null); setDragOverDate(null); }, []);
@@ -489,7 +494,7 @@ function CalendarContent() {
         body: JSON.stringify({
           jobId: cascadeModal.jobId,
           taskId: cascadeModal.taskId,
-          startDate: cascadeModal.newDate,
+          [cascadeModal.dateField === "startDate" ? "startDate" : "targetDate"]: cascadeModal.newDate,
           direction: "none",
         }),
       });
