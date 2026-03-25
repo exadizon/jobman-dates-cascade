@@ -40,6 +40,7 @@ interface CalendarEvent {
   date: string;       // YYYY-MM-DD — the date this pill appears on
   /** Which API field this date came from — determines which field to update on drag */
   dateField: "startDate" | "targetDate";
+  startDate: string | null;
   targetDate: string | null;
   isWorkOrder: boolean;
 }
@@ -232,7 +233,14 @@ function CalendarContent() {
   const [isCascading, setIsCascading] = useState(false);
   const [cascadeResults, setCascadeResults] = useState<CascadeStepResult[] | null>(null);
 
+  const [editModal, setEditModal] = useState<{
+    jobId: string; taskId: string; taskName: string; displayJobNumber: string; jobDescription: string | null;
+    taskType: TaskType; editDate: string;
+  } | null>(null);
+
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
+  // Prevents click handler from firing immediately after a drag operation
+  const isDraggingRef = useRef(false);
   const today = useMemo(() => new Date(), []);
   const weeks = useMemo(() => getMonthWeeks(currentMonth.getFullYear(), currentMonth.getMonth()), [currentMonth]);
 
@@ -315,9 +323,34 @@ function CalendarContent() {
     }, 500);
   }, [fetchJobs, router]);
 
-  const reloadJobs = useCallback(async () => {
-    const search = searchQuery.trim().length >= 2 ? searchQuery.trim() : undefined;
-    await fetchJobs(search, true); // force-refresh to bust server cache after cascade
+  // After a cascade/move, reload the affected job's data.
+  // In search mode: re-run the active search (gets fresh results for all visible jobs).
+  // In full-calendar mode: do a targeted search for just the changed job and merge it back in,
+  // avoiding the forceRefresh path that returns noCache and shows a stale/broken calendar.
+  const reloadJobs = useCallback(async (specificJobNumber?: string) => {
+    if (searchQuery.trim().length >= 2) {
+      await fetchJobs(searchQuery.trim());
+      return;
+    }
+    if (specificJobNumber) {
+      try {
+        const res = await fetch(`/api/jobman/calendar?search=${encodeURIComponent(specificJobNumber)}`);
+        const data = await res.json();
+        if (!data.error && data.jobs?.length) {
+          setAllJobs((prev) => {
+            const filtered = prev.filter((j) => {
+              const parentNum = j.isWorkOrder ? j.number.split(".")[0] : j.number;
+              return parentNum !== specificJobNumber;
+            });
+            const next = [...filtered, ...data.jobs];
+            try { localStorage.setItem("calendar_last_jobs", JSON.stringify(next)); } catch { /* storage full */ }
+            return next;
+          });
+        }
+      } catch { /* ignore reload failures silently */ }
+      return;
+    }
+    // Fallback: no search and no job number — can't efficiently refresh in full-calendar mode
   }, [fetchJobs, searchQuery]);
 
   // ── Derived data ─────────────────────────────────────────────
@@ -380,6 +413,7 @@ function CalendarContent() {
                 taskType,
                 date: dayStr,
                 dateField: "startDate",
+                startDate: task.startDate,
                 targetDate: task.targetDate,
                 isWorkOrder: job.isWorkOrder,
               });
@@ -409,6 +443,7 @@ function CalendarContent() {
           taskType,
           date,
           dateField,
+          startDate: task.startDate,
           targetDate: task.targetDate,
           isWorkOrder: job.isWorkOrder,
         });
@@ -448,7 +483,10 @@ function CalendarContent() {
 
   // ── Drag & drop ──────────────────────────────────────────────
 
-  const handleDragStart = useCallback((event: CalendarEvent) => setDraggingEvent(event), []);
+  const handleDragStart = useCallback((event: CalendarEvent) => {
+    isDraggingRef.current = true;
+    setDraggingEvent(event);
+  }, []);
   const handleDragOver = useCallback((e: React.DragEvent, dateStr: string) => {
     e.preventDefault();
     setDragOverDate(dateStr);
@@ -460,11 +498,17 @@ function CalendarContent() {
     setCascadeModal({ jobId: draggingEvent.jobId, taskId: draggingEvent.taskId, taskName: draggingEvent.taskName, newDate: dateStr, taskType: draggingEvent.taskType, dateField: draggingEvent.dateField });
     setDraggingEvent(null);
   }, [draggingEvent]);
-  const handleDragEnd = useCallback(() => { setDraggingEvent(null); setDragOverDate(null); }, []);
+  const handleDragEnd = useCallback(() => {
+    setDraggingEvent(null);
+    setDragOverDate(null);
+    // Keep flag true briefly so onClick doesn't fire right after a drag ends
+    setTimeout(() => { isDraggingRef.current = false; }, 150);
+  }, []);
 
   const runCascade = useCallback(async () => {
     if (!cascadeModal) return;
     setIsCascading(true);
+    const parentNum = allJobs.find((j) => j.id === cascadeModal.jobId)?.number.split(".")[0];
     try {
       const res = await fetch("/api/jobman/smart-cascade", {
         method: "POST",
@@ -472,21 +516,20 @@ function CalendarContent() {
         body: JSON.stringify({ jobId: cascadeModal.jobId, anchorTaskId: cascadeModal.taskId, newStartDate: cascadeModal.newDate }),
       });
       const data = await res.json();
-      // Brief pause to let Jobman commit the date changes before we re-fetch
       await new Promise((r) => setTimeout(r, 800));
-      // Reload calendar data FIRST so it's ready when the user closes the results modal
-      await reloadJobs();
+      await reloadJobs(parentNum);
       setCascadeResults(data.steps || []);
     } catch {
       setError("Failed to run cascade.");
     }
     setIsCascading(false);
-  }, [cascadeModal, reloadJobs]);
+  }, [cascadeModal, reloadJobs, allJobs]);
 
   // Move a single task without cascading (for non-primary-install tasks)
   const runSingleMove = useCallback(async () => {
     if (!cascadeModal) return;
     setIsCascading(true);
+    const parentNum = allJobs.find((j) => j.id === cascadeModal.jobId)?.number.split(".")[0];
     try {
       const res = await fetch("/api/jobman/task-date", {
         method: "POST",
@@ -494,14 +537,15 @@ function CalendarContent() {
         body: JSON.stringify({
           jobId: cascadeModal.jobId,
           taskId: cascadeModal.taskId,
-          [cascadeModal.dateField === "startDate" ? "startDate" : "targetDate"]: cascadeModal.newDate,
+          startDate: cascadeModal.newDate,
+          targetDate: cascadeModal.newDate,
           direction: "none",
         }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Failed to move task");
       await new Promise((r) => setTimeout(r, 800));
-      await reloadJobs();
+      await reloadJobs(parentNum);
       setCascadeResults([{
         step: 1,
         description: `Moved "${cascadeModal.taskName}" to ${formatShortDate(parseYMD(cascadeModal.newDate))}`,
@@ -513,7 +557,43 @@ function CalendarContent() {
       setCascadeModal(null);
     }
     setIsCascading(false);
-  }, [cascadeModal, reloadJobs]);
+  }, [cascadeModal, reloadJobs, allJobs]);
+
+  // Save dates from the click-to-edit modal
+  const runEditSave = useCallback(async () => {
+    if (!editModal) return;
+    setIsCascading(true);
+    try {
+      if (editModal.taskType === "primary_install") {
+        const res = await fetch("/api/jobman/smart-cascade", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: editModal.jobId, anchorTaskId: editModal.taskId, newStartDate: editModal.editDate }),
+        });
+        const data = await res.json();
+        await new Promise((r) => setTimeout(r, 800));
+        await reloadJobs(editModal.displayJobNumber);
+        setCascadeResults(data.steps || []);
+      } else {
+        // For single-day tasks, set both startDate and targetDate to keep them in sync
+        const res = await fetch("/api/jobman/task-date", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: editModal.jobId, taskId: editModal.taskId, startDate: editModal.editDate, targetDate: editModal.editDate, direction: "none" }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || "Failed to update dates");
+        await new Promise((r) => setTimeout(r, 800));
+        await reloadJobs(editModal.displayJobNumber);
+        setCascadeResults([{ step: 1, description: `Moved "${editModal.taskName}" to ${formatShortDate(parseYMD(editModal.editDate))}`, success: true, dateSet: editModal.editDate }]);
+      }
+      setEditModal(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update dates");
+      setEditModal(null);
+    }
+    setIsCascading(false);
+  }, [editModal, reloadJobs]);
 
   // ── Render ───────────────────────────────────────────────────
 
@@ -737,6 +817,19 @@ function CalendarContent() {
                             draggable
                             onDragStart={() => handleDragStart(event)}
                             onDragEnd={handleDragEnd}
+                            onClick={(e) => {
+                              if (isDraggingRef.current) return;
+                              e.stopPropagation();
+                              setEditModal({
+                                jobId: event.jobId,
+                                taskId: event.taskId,
+                                taskName: event.taskName,
+                                displayJobNumber: event.displayJobNumber,
+                                jobDescription: event.jobDescription,
+                                taskType: event.taskType,
+                                editDate: event.startDate ?? event.date,
+                              });
+                            }}
                             className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium truncate cursor-grab active:cursor-grabbing hover:brightness-95 transition-all"
                             style={{
                               background: cfg.bg,
@@ -783,6 +876,45 @@ function CalendarContent() {
           </div>
         )}
       </div>
+
+      {/* ── Click-to-edit dates modal ──────────── */}
+      {editModal && !cascadeResults && (
+        <Modal>
+          <h3 className="text-lg font-semibold text-gray-900 mb-1">Edit Dates</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            <span style={{ fontFamily: "var(--font-mono), monospace", fontWeight: 500 }}>{editModal.displayJobNumber}</span>
+            {editModal.jobDescription && <span className="ml-1.5">{editModal.jobDescription}</span>}
+          </p>
+          <div className="flex flex-col gap-3 mb-5">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-gray-600">
+                {editModal.taskType === "primary_install" ? "Start date" : "Date"}
+              </span>
+              <input
+                type="date"
+                value={editModal.editDate}
+                onChange={(e) => setEditModal((m) => m ? { ...m, editDate: e.target.value } : m)}
+                className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </label>
+            {editModal.taskType === "primary_install" && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Moving Primary Install will cascade all related task dates automatically.
+              </p>
+            )}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => setEditModal(null)} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
+              Cancel
+            </button>
+            <button onClick={runEditSave} disabled={isCascading} className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+              {isCascading
+                ? <span className="flex items-center justify-center gap-2"><Spinner />Saving…</span>
+                : editModal.taskType === "primary_install" ? "Move & Cascade" : "Save Dates"}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {/* ── Cascade / Move confirmation modal ──────────── */}
       {cascadeModal && !cascadeResults && (
@@ -852,7 +984,7 @@ function CalendarContent() {
               </div>
             ))}
           </div>
-          <button onClick={() => { setCascadeModal(null); setCascadeResults(null); }} className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors">
+          <button onClick={() => { setCascadeModal(null); setEditModal(null); setCascadeResults(null); }} className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors">
             Close
           </button>
         </Modal>
