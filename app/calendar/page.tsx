@@ -548,7 +548,7 @@ function CalendarContent() {
               color: "#1a1c1a",
             }}
           />
-          {isLoading && allJobs.length > 0 && searchQuery.trim().length >= 2 && <Spinner className="absolute right-3 top-1/2 -translate-y-1/2" />}
+          {isLoading && allJobs.length > 0 && searchQuery.trim().length >= 2 && <Spinner className="h-4 w-4 absolute right-3 top-1/2 -translate-y-1/2" />}
         </div>
 
         <div className="ml-auto flex items-center gap-2">
