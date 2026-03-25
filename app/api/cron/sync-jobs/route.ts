@@ -24,13 +24,23 @@ function getRedis() {
   });
 }
 
+const JOBMAN_TIMEZONE = process.env.JOBMAN_TIMEZONE || "Pacific/Auckland";
+
+function parseJobmanDate(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  if (!dateStr.includes("T")) return dateStr;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr.split("T")[0];
+  return new Intl.DateTimeFormat("en-CA", { timeZone: JOBMAN_TIMEZONE }).format(d);
+}
+
 function mapTask(task: JobTask, stepName: string): CalendarTask {
   return {
     id: task.id,
     name: task.name,
     stepName,
-    startDate: task.start_date ? task.start_date.split("T")[0] : null,
-    targetDate: task.target_date ? task.target_date.split("T")[0] : null,
+    startDate: parseJobmanDate(task.start_date),
+    targetDate: parseJobmanDate(task.target_date),
     status: task.status,
     progress: task.progress,
     locked: task.target_date_locked,
