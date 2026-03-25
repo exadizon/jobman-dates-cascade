@@ -15,6 +15,7 @@ export interface CalendarJob {
   id: string;
   number: string;
   name: string;
+  description: string | null;
   isWorkOrder: boolean;
   parentNumber?: string;
   tasks: CalendarTask[];
@@ -116,6 +117,7 @@ async function buildAllCalendarJobs(log: (msg: string) => void): Promise<Calenda
       id: job.id,
       number: job.number,
       name: getJobDisplayName(job),
+      description: job.description ?? null,
       isWorkOrder,
       parentNumber,
       tasks,
@@ -147,6 +149,7 @@ async function buildAllCalendarJobs(log: (msg: string) => void): Promise<Calenda
             id: wo.id,
             number: wo.number,
             name: getJobDisplayName(wo),
+            description: wo.description ?? null,
             isWorkOrder: true,
             parentNumber: job.number,
             tasks: woTasks,
@@ -210,7 +213,7 @@ export async function GET(request: NextRequest) {
           log(`  ${job.number} → getJobSteps failed: ${err instanceof Error ? err.message : String(err)}`);
         }
 
-        calendarJobs.push({ id: job.id, number: job.number, name: getJobDisplayName(job), isWorkOrder, parentNumber, tasks });
+        calendarJobs.push({ id: job.id, number: job.number, name: getJobDisplayName(job), description: job.description ?? null, isWorkOrder, parentNumber, tasks });
 
         if (!isWorkOrder) {
           try {
@@ -227,7 +230,7 @@ export async function GET(request: NextRequest) {
                   (step.tasks || []).map((task: JobTask) => mapTask(task, step.name))
                 );
               } catch { /* skip */ }
-              calendarJobs.push({ id: wo.id, number: wo.number, name: getJobDisplayName(wo), isWorkOrder: true, parentNumber: job.number, tasks: woTasks });
+              calendarJobs.push({ id: wo.id, number: wo.number, name: getJobDisplayName(wo), description: wo.description ?? null, isWorkOrder: true, parentNumber: job.number, tasks: woTasks });
             }
           } catch { /* skip */ }
         }

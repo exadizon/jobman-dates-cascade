@@ -104,14 +104,9 @@ export async function POST(request: NextRequest) {
 
     if (taskBefore) {
       // Target date of the task before = one day before the anchor's start date
-      const anchorDate = new Date(newStartDate + "T00:00:00");
-      anchorDate.setDate(anchorDate.getDate() - 1);
-      const dayBefore =
-        anchorDate.getFullYear() +
-        "-" +
-        String(anchorDate.getMonth() + 1).padStart(2, "0") +
-        "-" +
-        String(anchorDate.getDate()).padStart(2, "0");
+      const anchorDate = new Date(newStartDate + "T00:00:00Z");
+      anchorDate.setUTCDate(anchorDate.getUTCDate() - 1);
+      const dayBefore = anchorDate.toISOString().split("T")[0];
 
       console.log(`[SmartCascade] Step 1b: Reverse cascade from "${taskBefore.name}" with target_date = ${dayBefore}`);
 

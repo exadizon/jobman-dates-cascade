@@ -21,6 +21,7 @@ interface CalendarJob {
   id: string;
   number: string;
   name: string;
+  description: string | null;
   isWorkOrder: boolean;
   parentNumber?: string;
   tasks: CalendarTask[];
@@ -32,6 +33,8 @@ interface CalendarEvent {
   jobNumber: string;
   /** Parent job number for work orders (e.g. "0177" instead of "0177.1") */
   displayJobNumber: string;
+  /** Job description for display on the pill (uses parent job description for work orders) */
+  jobDescription: string | null;
   taskName: string;
   taskType: TaskType;
   date: string;       // YYYY-MM-DD — the date this pill appears on
@@ -50,7 +53,7 @@ interface CascadeStepResult {
 
 // ─── Task Type Config ──────────────────────────────────────────
 
-type TaskType = "site_measure" | "primary_install" | "worktop_install" | "final_fit_off";
+type TaskType = "site_measure" | "primary_install" | "worktop_install" | "final_fit_off" | "cut_from_machining" | "pallet_collected";
 
 interface TaskTypeConfig {
   label: string;
@@ -98,6 +101,24 @@ const TASK_TYPES: Record<TaskType, TaskTypeConfig> = {
     border: "#db2777",
     text: "#831843",
     dot: "#db2777",
+  },
+  cut_from_machining: {
+    label: "Cut from Machining",
+    keywords: ["cut from machining"],
+    jobSource: "work_order",
+    bg: "#dbeafe",
+    border: "#2563eb",
+    text: "#1e3a5f",
+    dot: "#2563eb",
+  },
+  pallet_collected: {
+    label: "Pallet Collected",
+    keywords: ["pallet collected"],
+    jobSource: "work_order",
+    bg: "#ccfbf1",
+    border: "#0d9488",
+    text: "#134e4a",
+    dot: "#0d9488",
   },
 };
 
@@ -197,14 +218,14 @@ function CalendarContent() {
   const [showDebug, setShowDebug] = useState(false);
 
   const [activeTaskTypes, setActiveTaskTypes] = useState<Set<TaskType>>(
-    () => new Set<TaskType>(["site_measure", "primary_install", "worktop_install", "final_fit_off"])
+    () => new Set<TaskType>(["site_measure", "primary_install", "worktop_install", "final_fit_off", "cut_from_machining", "pallet_collected"])
   );
 
   const [draggingEvent, setDraggingEvent] = useState<CalendarEvent | null>(null);
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
 
   const [cascadeModal, setCascadeModal] = useState<{
-    jobId: string; taskId: string; taskName: string; newDate: string;
+    jobId: string; taskId: string; taskName: string; newDate: string; taskType: TaskType;
   } | null>(null);
   const [isCascading, setIsCascading] = useState(false);
   const [cascadeResults, setCascadeResults] = useState<CascadeStepResult[] | null>(null);
@@ -312,6 +333,14 @@ function CalendarContent() {
   // Deduplicates by (displayJobNumber + taskType + date) so multiple work orders
   // for the same parent don't produce duplicate pills for the same task type on the same day.
   const events = useMemo<CalendarEvent[]>(() => {
+    // Build a lookup of parent job descriptions so work orders can use the parent's description
+    const parentDescriptions = new Map<string, string | null>();
+    for (const job of filteredJobs) {
+      if (!job.isWorkOrder) {
+        parentDescriptions.set(job.number, job.description);
+      }
+    }
+
     const result: CalendarEvent[] = [];
     const seen = new Set<string>();
     for (const job of filteredJobs) {
@@ -320,11 +349,46 @@ function CalendarContent() {
         ? (job.parentNumber ?? job.number.split(".")[0])
         : job.number;
 
+      // Use parent job description for work orders, own description for parent jobs
+      const jobDescription = job.isWorkOrder
+        ? (parentDescriptions.get(displayJobNumber) ?? job.description)
+        : job.description;
+
       for (const task of job.tasks) {
-        const date = task.startDate || task.targetDate;
-        if (!date) continue;
         const taskType = matchTaskType(task.name, job.isWorkOrder);
         if (!taskType || !activeTaskTypes.has(taskType)) continue;
+
+        // Multi-day rendering for primary install: generate a pill for each day in the range
+        if (taskType === "primary_install" && task.startDate && task.targetDate && task.startDate !== task.targetDate) {
+          const start = parseYMD(task.startDate);
+          const end = parseYMD(task.targetDate);
+          let cursor = new Date(start);
+          while (cursor <= end) {
+            const dayStr = toYMD(cursor);
+            const key = `${displayJobNumber}:${taskType}:${dayStr}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              result.push({
+                taskId: task.id,
+                jobId: job.id,
+                jobNumber: job.number,
+                displayJobNumber,
+                jobDescription,
+                taskName: task.name,
+                taskType,
+                date: dayStr,
+                targetDate: task.targetDate,
+                isWorkOrder: job.isWorkOrder,
+              });
+            }
+            cursor = addDays(cursor, 1);
+          }
+          continue;
+        }
+
+        // Single-day rendering for all other task types
+        const date = task.startDate || task.targetDate;
+        if (!date) continue;
 
         // Deduplicate: same parent job, same task type, same date → show only once
         const key = `${displayJobNumber}:${taskType}:${date}`;
@@ -336,6 +400,7 @@ function CalendarContent() {
           jobId: job.id,
           jobNumber: job.number,
           displayJobNumber,
+          jobDescription,
           taskName: task.name,
           taskType,
           date,
@@ -387,7 +452,7 @@ function CalendarContent() {
     e.preventDefault();
     setDragOverDate(null);
     if (!draggingEvent || dateStr === draggingEvent.date) { setDraggingEvent(null); return; }
-    setCascadeModal({ jobId: draggingEvent.jobId, taskId: draggingEvent.taskId, taskName: draggingEvent.taskName, newDate: dateStr });
+    setCascadeModal({ jobId: draggingEvent.jobId, taskId: draggingEvent.taskId, taskName: draggingEvent.taskName, newDate: dateStr, taskType: draggingEvent.taskType });
     setDraggingEvent(null);
   }, [draggingEvent]);
   const handleDragEnd = useCallback(() => { setDraggingEvent(null); setDragOverDate(null); }, []);
@@ -409,6 +474,38 @@ function CalendarContent() {
       setCascadeResults(data.steps || []);
     } catch {
       setError("Failed to run cascade.");
+    }
+    setIsCascading(false);
+  }, [cascadeModal, reloadJobs]);
+
+  // Move a single task without cascading (for non-primary-install tasks)
+  const runSingleMove = useCallback(async () => {
+    if (!cascadeModal) return;
+    setIsCascading(true);
+    try {
+      const res = await fetch("/api/jobman/task-date", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: cascadeModal.jobId,
+          taskId: cascadeModal.taskId,
+          startDate: cascadeModal.newDate,
+          direction: "none",
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to move task");
+      await new Promise((r) => setTimeout(r, 800));
+      await reloadJobs();
+      setCascadeResults([{
+        step: 1,
+        description: `Moved "${cascadeModal.taskName}" to ${formatShortDate(parseYMD(cascadeModal.newDate))}`,
+        success: true,
+        dateSet: cascadeModal.newDate,
+      }]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to move task.");
+      setCascadeModal(null);
     }
     setIsCascading(false);
   }, [cascadeModal, reloadJobs]);
@@ -641,10 +738,10 @@ function CalendarContent() {
                               color: cfg.text,
                               borderLeft: `3px solid ${cfg.border}`,
                             }}
-                            title={`${event.displayJobNumber} — ${event.taskName}`}
+                            title={`${event.displayJobNumber} — ${event.jobDescription || event.taskName}`}
                           >
                             <span className="shrink-0" style={{ fontFamily: "var(--font-mono), monospace", fontWeight: 500 }}>{event.displayJobNumber}</span>
-                            <span className="truncate opacity-75">{cfg.label}</span>
+                            <span className="truncate opacity-75">{event.jobDescription || cfg.label}</span>
                           </div>
                         );
                       })}
@@ -682,30 +779,51 @@ function CalendarContent() {
         )}
       </div>
 
-      {/* ── Cascade confirmation modal ──────────── */}
+      {/* ── Cascade / Move confirmation modal ──────────── */}
       {cascadeModal && !cascadeResults && (
         <Modal>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Run Smart Cascade?</h3>
-          <p className="text-sm text-gray-500 mb-4">
-            Move <strong className="text-gray-800">{cascadeModal.taskName}</strong> to{" "}
-            <strong className="text-blue-600">{formatShortDate(parseYMD(cascadeModal.newDate))}</strong> and cascade all related dates?
-          </p>
-          <ol className="mb-4 ml-4 space-y-1 text-sm text-gray-500 list-decimal">
-            <li>Reverse-calculate all tasks before this one</li>
-            <li>Forward-calculate all tasks after the next task</li>
-            <li>Cascade all work orders</li>
-          </ol>
-          <div className="mb-5 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
-            This action cannot be undone.
-          </div>
-          <div className="flex gap-3">
-            <button onClick={() => { setCascadeModal(null); setCascadeResults(null); }} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
-              Cancel
-            </button>
-            <button onClick={runCascade} disabled={isCascading} className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
-              {isCascading ? <span className="flex items-center justify-center gap-2"><Spinner />Running…</span> : "Run Cascade"}
-            </button>
-          </div>
+          {cascadeModal.taskType === "primary_install" ? (
+            <>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Run Smart Cascade?</h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Move <strong className="text-gray-800">{cascadeModal.taskName}</strong> to{" "}
+                <strong className="text-blue-600">{formatShortDate(parseYMD(cascadeModal.newDate))}</strong> and cascade all related dates?
+              </p>
+              <ol className="mb-4 ml-4 space-y-1 text-sm text-gray-500 list-decimal">
+                <li>Reverse-calculate all tasks before this one</li>
+                <li>Forward-calculate all tasks after the next task</li>
+                <li>Cascade all work orders</li>
+              </ol>
+              <div className="mb-5 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+                This action cannot be undone.
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => { setCascadeModal(null); setCascadeResults(null); }} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button onClick={runCascade} disabled={isCascading} className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                  {isCascading ? <span className="flex items-center justify-center gap-2"><Spinner />Running…</span> : "Run Cascade"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Move Task?</h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Move <strong className="text-gray-800">{cascadeModal.taskName}</strong> to{" "}
+                <strong className="text-blue-600">{formatShortDate(parseYMD(cascadeModal.newDate))}</strong>?
+              </p>
+              <p className="text-xs text-gray-400 mb-5">Only this task will be moved. No other dates will be affected.</p>
+              <div className="flex gap-3">
+                <button onClick={() => { setCascadeModal(null); setCascadeResults(null); }} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button onClick={runSingleMove} disabled={isCascading} className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                  {isCascading ? <span className="flex items-center justify-center gap-2"><Spinner />Moving…</span> : "Move Task"}
+                </button>
+              </div>
+            </>
+          )}
         </Modal>
       )}
 

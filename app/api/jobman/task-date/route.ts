@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateTaskTargetDate, updateTaskStartDate } from "@/lib/jobman";
+import type { RecalculateDirection } from "@/lib/jobman";
 
 /**
  * POST /api/jobman/task-date
  * Set an individual task's target_date and/or start_date.
+ * Optional `direction` controls recalculation: "none" (default) moves only this task,
+ * "all" cascades in both directions, "before"/"after" cascade in one direction.
  */
 export async function POST(request: NextRequest) {
   let body: {
@@ -11,6 +14,7 @@ export async function POST(request: NextRequest) {
     taskId: string;
     targetDate?: string;
     startDate?: string;
+    direction?: RecalculateDirection;
   };
 
   try {
@@ -19,7 +23,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { jobId, taskId, targetDate, startDate } = body;
+  const { jobId, taskId, targetDate, startDate, direction = "none" } = body;
 
   if (!jobId || !taskId) {
     return NextResponse.json(
@@ -37,10 +41,10 @@ export async function POST(request: NextRequest) {
 
   try {
     if (targetDate) {
-      await updateTaskTargetDate(jobId, taskId, targetDate);
+      await updateTaskTargetDate(jobId, taskId, targetDate, direction);
     }
     if (startDate) {
-      await updateTaskStartDate(jobId, taskId, startDate);
+      await updateTaskStartDate(jobId, taskId, startDate, direction);
     }
 
     return NextResponse.json({ success: true });
