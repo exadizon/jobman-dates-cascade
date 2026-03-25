@@ -830,16 +830,18 @@ function CalendarContent() {
                                 editDate: event.startDate ?? event.date,
                               });
                             }}
-                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium truncate cursor-grab active:cursor-grabbing hover:brightness-95 transition-all"
+                            className="flex items-start gap-1 rounded px-1.5 py-0.5 text-xs font-medium cursor-grab active:cursor-grabbing hover:brightness-95 transition-all"
                             style={{
                               background: cfg.bg,
                               color: cfg.text,
                               borderLeft: `3px solid ${cfg.border}`,
                             }}
-                            title={`${event.displayJobNumber} — ${event.jobDescription || event.taskName}`}
+                            title={`${event.displayJobNumber}${event.jobDescription ? ` — ${event.jobDescription}` : ""} — ${cfg.label}`}
                           >
                             <span className="shrink-0" style={{ fontFamily: "var(--font-mono), monospace", fontWeight: 500 }}>{event.displayJobNumber}</span>
-                            <span className="truncate opacity-75">{event.jobDescription || cfg.label}</span>
+                            <span className="opacity-75 leading-tight">
+                              {event.jobDescription ? `${event.jobDescription} · ${event.taskName}` : event.taskName}
+                            </span>
                           </div>
                         );
                       })}
@@ -881,10 +883,11 @@ function CalendarContent() {
       {editModal && !cascadeResults && (
         <Modal>
           <h3 className="text-lg font-semibold text-gray-900 mb-1">Edit Dates</h3>
-          <p className="text-sm text-gray-500 mb-4">
+          <p className="text-sm text-gray-500 mb-0.5">
             <span style={{ fontFamily: "var(--font-mono), monospace", fontWeight: 500 }}>{editModal.displayJobNumber}</span>
             {editModal.jobDescription && <span className="ml-1.5">{editModal.jobDescription}</span>}
           </p>
+          <p className="text-sm font-medium text-gray-700 mb-4">{editModal.taskName}</p>
           <div className="flex flex-col gap-3 mb-5">
             <label className="flex flex-col gap-1">
               <span className="text-xs font-medium text-gray-600">
