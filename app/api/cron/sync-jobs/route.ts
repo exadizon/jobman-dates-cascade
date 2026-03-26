@@ -92,6 +92,12 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
+      // Skip soft-deleted jobs
+      if (job.trashed_at) {
+        await sleep(DELAY_BETWEEN_JOBS_MS);
+        continue;
+      }
+
       let tasks: CalendarTask[] = [];
       try {
         const steps = await getJobSteps(job.id);
@@ -113,6 +119,7 @@ export async function GET(request: NextRequest) {
         description: job.description ?? null,
         isWorkOrder,
         parentNumber,
+        jobTypes: (job.types || []).map((t) => t.name),
         tasks,
       });
 
@@ -138,6 +145,7 @@ export async function GET(request: NextRequest) {
               description: wo.description ?? null,
               isWorkOrder: true,
               parentNumber: job.number,
+              jobTypes: (job.types || []).map((t) => t.name), // inherit parent job's types
               tasks: woTasks,
             });
           }

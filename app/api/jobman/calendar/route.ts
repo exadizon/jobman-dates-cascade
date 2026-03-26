@@ -18,6 +18,8 @@ export interface CalendarJob {
   description: string | null;
   isWorkOrder: boolean;
   parentNumber?: string;
+  /** Job type names (e.g. ["02_Queenstown", "03_Builder"]) */
+  jobTypes: string[];
   tasks: CalendarTask[];
 }
 
@@ -108,6 +110,13 @@ async function buildAllCalendarJobs(log: (msg: string) => void): Promise<Calenda
       continue;
     }
 
+    // Skip soft-deleted jobs
+    if (job.trashed_at) {
+      log(`  ${job.number} → deleted (trashed_at=${job.trashed_at}), skipping`);
+      await sleep(DELAY_BETWEEN_JOBS_MS);
+      continue;
+    }
+
     let tasks: CalendarTask[] = [];
     try {
       const steps = await getJobSteps(job.id);
@@ -133,6 +142,7 @@ async function buildAllCalendarJobs(log: (msg: string) => void): Promise<Calenda
       description: job.description ?? null,
       isWorkOrder,
       parentNumber,
+      jobTypes: (job.types || []).map((t) => t.name),
       tasks,
     });
 
@@ -165,6 +175,7 @@ async function buildAllCalendarJobs(log: (msg: string) => void): Promise<Calenda
             description: wo.description ?? null,
             isWorkOrder: true,
             parentNumber: job.number,
+            jobTypes: (job.types || []).map((t) => t.name), // inherit parent job's types for work orders
             tasks: woTasks,
           });
         }
@@ -216,6 +227,12 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
+        // Skip soft-deleted jobs
+        if (job.trashed_at) {
+          log(`  ${job.number} → deleted, skipping`);
+          continue;
+        }
+
         let tasks: CalendarTask[] = [];
         try {
           const steps = await getJobSteps(job.id);
@@ -226,7 +243,7 @@ export async function GET(request: NextRequest) {
           log(`  ${job.number} → getJobSteps failed: ${err instanceof Error ? err.message : String(err)}`);
         }
 
-        calendarJobs.push({ id: job.id, number: job.number, name: getJobDisplayName(job), description: job.description ?? null, isWorkOrder, parentNumber, tasks });
+        calendarJobs.push({ id: job.id, number: job.number, name: getJobDisplayName(job), description: job.description ?? null, isWorkOrder, parentNumber, jobTypes: (job.types || []).map((t) => t.name), tasks });
 
         if (!isWorkOrder) {
           try {
@@ -243,7 +260,7 @@ export async function GET(request: NextRequest) {
                   (step.tasks || []).map((task: JobTask) => mapTask(task, step.name))
                 );
               } catch { /* skip */ }
-              calendarJobs.push({ id: wo.id, number: wo.number, name: getJobDisplayName(wo), description: wo.description ?? null, isWorkOrder: true, parentNumber: job.number, tasks: woTasks });
+              calendarJobs.push({ id: wo.id, number: wo.number, name: getJobDisplayName(wo), description: wo.description ?? null, isWorkOrder: true, parentNumber: job.number, jobTypes: (job.types || []).map((t) => t.name), tasks: woTasks });
             }
           } catch { /* skip */ }
         }

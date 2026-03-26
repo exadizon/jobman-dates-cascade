@@ -4,6 +4,27 @@ import { useState, useCallback, useRef, useMemo, useEffect, Suspense } from "rea
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 
+// ─── Misc items ───────────────────────────────────────────────
+
+interface MiscItem {
+  id: string;
+  date: string; // YYYY-MM-DD
+  text: string;
+}
+
+const MISC_STORAGE_KEY = "calendar_misc_items";
+
+function loadMiscItems(): MiscItem[] {
+  try {
+    const raw = localStorage.getItem(MISC_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as MiscItem[]) : [];
+  } catch { return []; }
+}
+
+function saveMiscItems(items: MiscItem[]) {
+  try { localStorage.setItem(MISC_STORAGE_KEY, JSON.stringify(items)); } catch { /* storage full */ }
+}
+
 // ─── Types ────────────────────────────────────────────────────
 
 interface CalendarTask {
@@ -24,6 +45,7 @@ interface CalendarJob {
   description: string | null;
   isWorkOrder: boolean;
   parentNumber?: string;
+  jobTypes: string[];
   tasks: CalendarTask[];
 }
 
@@ -43,6 +65,7 @@ interface CalendarEvent {
   startDate: string | null;
   targetDate: string | null;
   isWorkOrder: boolean;
+  jobTypes: string[];
 }
 
 interface CascadeStepResult {
@@ -224,6 +247,13 @@ function CalendarContent() {
     () => new Set<TaskType>(["site_measure", "primary_install", "worktop_install", "final_fit_off", "cut_from_machining", "pallet_collected"])
   );
 
+  // null = show all, "qt" = Queenstown only, "akl" = Auckland only
+  const [regionFilter, setRegionFilter] = useState<"qt" | "akl" | null>(null);
+
+  const toggleRegion = useCallback((region: "qt" | "akl") => {
+    setRegionFilter((prev) => (prev === region ? null : region));
+  }, []);
+
   const [draggingEvent, setDraggingEvent] = useState<CalendarEvent | null>(null);
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
 
@@ -237,6 +267,47 @@ function CalendarContent() {
     jobId: string; taskId: string; taskName: string; displayJobNumber: string; jobDescription: string | null;
     taskType: TaskType; editDate: string;
   } | null>(null);
+
+  const [miscItems, setMiscItems] = useState<MiscItem[]>([]);
+  const [miscModal, setMiscModal] = useState<{ date: string; editing: MiscItem | null } | null>(null);
+  const [miscDraft, setMiscDraft] = useState("");
+
+  // Load misc items from localStorage on mount
+  useEffect(() => { setMiscItems(loadMiscItems()); }, []);
+
+  const openMiscModal = useCallback((date: string) => {
+    const existing = miscItems.find((m) => m.date === date) ?? null;
+    setMiscDraft(existing?.text ?? "");
+    setMiscModal({ date, editing: existing });
+  }, [miscItems]);
+
+  const saveMisc = useCallback(() => {
+    if (!miscModal) return;
+    const text = miscDraft.trim();
+    setMiscItems((prev) => {
+      let next: MiscItem[];
+      if (!text) {
+        // Empty text → delete
+        next = prev.filter((m) => m.id !== miscModal.editing?.id);
+      } else if (miscModal.editing) {
+        next = prev.map((m) => m.id === miscModal.editing!.id ? { ...m, text } : m);
+      } else {
+        next = [...prev, { id: crypto.randomUUID(), date: miscModal.date, text }];
+      }
+      saveMiscItems(next);
+      return next;
+    });
+    setMiscModal(null);
+  }, [miscModal, miscDraft]);
+
+  const deleteMisc = useCallback((id: string) => {
+    setMiscItems((prev) => {
+      const next = prev.filter((m) => m.id !== id);
+      saveMiscItems(next);
+      return next;
+    });
+    setMiscModal(null);
+  }, []);
 
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   // Prevents click handler from firing immediately after a drag operation
@@ -393,6 +464,10 @@ function CalendarContent() {
         const taskType = matchTaskType(task.name, job.isWorkOrder);
         if (!taskType || !activeTaskTypes.has(taskType)) continue;
 
+        // Region filter: check job type names for queenstown/auckland keywords
+        if (regionFilter === "qt" && !job.jobTypes.some((t) => t.toLowerCase().includes("queenstown"))) continue;
+        if (regionFilter === "akl" && !job.jobTypes.some((t) => t.toLowerCase().includes("auckland"))) continue;
+
         // Multi-day rendering for primary install: generate a pill for each day in the range
         if (taskType === "primary_install" && task.startDate && task.targetDate && task.startDate !== task.targetDate) {
           const start = parseYMD(task.startDate);
@@ -416,6 +491,7 @@ function CalendarContent() {
                 startDate: task.startDate,
                 targetDate: task.targetDate,
                 isWorkOrder: job.isWorkOrder,
+                jobTypes: job.jobTypes,
               });
             }
             cursor = addDays(cursor, 1);
@@ -446,11 +522,12 @@ function CalendarContent() {
           startDate: task.startDate,
           targetDate: task.targetDate,
           isWorkOrder: job.isWorkOrder,
+          jobTypes: job.jobTypes,
         });
       }
     }
     return result;
-  }, [filteredJobs, activeTaskTypes]);
+  }, [filteredJobs, activeTaskTypes, regionFilter]);
 
   const getEventsForDate = useCallback(
     (dateStr: string) => events.filter((e) => e.date === dateStr),
@@ -700,6 +777,30 @@ function CalendarContent() {
           })}
         </div>
 
+        {/* Divider */}
+        <div className="h-5 w-px mx-1" style={{ background: "#e4e4e0" }} />
+
+        {/* Region filters */}
+        <div className="flex items-center gap-1.5">
+          {([["qt", "QT"], ["akl", "AKL"]] as const).map(([region, label]) => {
+            const active = regionFilter === region;
+            return (
+              <button
+                key={region}
+                onClick={() => toggleRegion(region)}
+                className="rounded-full px-3 py-1 text-xs font-semibold border transition-all select-none"
+                style={{
+                  background: active ? "#1a1c1a" : "white",
+                  borderColor: active ? "#1a1c1a" : "#d1d5db",
+                  color: active ? "white" : "#9ca3af",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Job count badge */}
         {allJobs.length > 0 && (
           <span className="ml-auto text-xs" style={{ color: "#9a9e9b" }}>
@@ -768,6 +869,7 @@ function CalendarContent() {
               {week.map((date) => {
                 const dateStr = toYMD(date);
                 const dayEvents = getEventsForDate(dateStr);
+                const dayMiscItems = miscItems.filter((m) => m.date === dateStr);
                 const inMonth = date.getMonth() === currentMonth.getMonth();
                 const isToday = isSameDay(date, today);
                 const weekend = isWeekend(date);
@@ -776,7 +878,7 @@ function CalendarContent() {
                 return (
                   <div
                     key={dateStr}
-                    className="border-r p-1.5 transition-colors relative"
+                    className="border-r p-1.5 transition-colors relative cursor-pointer"
                     style={{
                       borderColor: "#ebebea",
                       background: isDragOver
@@ -789,6 +891,7 @@ function CalendarContent() {
                               ? "white"
                               : "#f9f9f8",
                     }}
+                    onClick={() => openMiscModal(dateStr)}
                     onDragOver={(e) => handleDragOver(e, dateStr)}
                     onDrop={(e) => handleDrop(e, dateStr)}
                   >
@@ -847,6 +950,20 @@ function CalendarContent() {
                       })}
                     </div>
 
+                    {/* Misc item pills */}
+                    {dayMiscItems.map((item) => (
+                      <div
+                        key={item.id}
+                        onClick={(e) => { e.stopPropagation(); openMiscModal(dateStr); }}
+                        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium cursor-pointer hover:brightness-95 transition-all mt-0.5"
+                        style={{ background: "#fef9c3", color: "#713f12", borderLeft: "3px solid #ca8a04" }}
+                        title={item.text}
+                      >
+                        <span className="opacity-60">★</span>
+                        <span className="truncate">{item.text}</span>
+                      </div>
+                    ))}
+
                     {/* Drag-over indicator */}
                     {isDragOver && (
                       <div className="absolute inset-0 rounded border-2 pointer-events-none" style={{ borderColor: "#454E49" }} />
@@ -878,6 +995,38 @@ function CalendarContent() {
           </div>
         )}
       </div>
+
+      {/* ── Misc item modal ───────────────────── */}
+      {miscModal && (
+        <Modal>
+          <h3 className="text-lg font-semibold text-gray-900 mb-1">
+            {miscModal.editing ? "Edit note" : "Add note"}
+          </h3>
+          <p className="text-sm text-gray-500 mb-4">{formatShortDate(parseYMD(miscModal.date))}</p>
+          <textarea
+            autoFocus
+            value={miscDraft}
+            onChange={(e) => setMiscDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveMisc(); } }}
+            placeholder="Add a note…"
+            rows={3}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-400 resize-none mb-4"
+          />
+          <div className="flex gap-3">
+            {miscModal.editing && (
+              <button onClick={() => deleteMisc(miscModal.editing!.id)} className="rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">
+                Delete
+              </button>
+            )}
+            <button onClick={() => setMiscModal(null)} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
+              Cancel
+            </button>
+            <button onClick={saveMisc} className="flex-1 rounded-lg bg-yellow-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-yellow-600 transition-colors">
+              Save
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {/* ── Click-to-edit dates modal ──────────── */}
       {editModal && !cascadeResults && (
