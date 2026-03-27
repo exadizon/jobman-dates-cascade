@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useMemo, useEffect, Suspense } from "react";
-import Link from "next/link";
+// import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 
 // ─── Misc items ───────────────────────────────────────────────
@@ -735,9 +735,9 @@ function CalendarContent() {
               Debug {showDebug ? "▲" : "▼"}
             </button>
           )}
-          <Link href="/cascade" className="rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-gray-50" style={{ borderColor: "#e4e4e0", color: "#4a4f4b" }}>
+          {/* <Link href="/cascade" className="rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-gray-50" style={{ borderColor: "#e4e4e0", color: "#4a4f4b" }}>
             Cascade Tool
-          </Link>
+          </Link> */}
         </div>
       </div>
 
