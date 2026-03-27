@@ -130,8 +130,8 @@ const TASK_TYPES: Record<TaskType, TaskTypeConfig> = {
   },
   cut_from_machining: {
     label: "Cut from Machining",
-    keywords: ["cut from machining"],
-    jobSource: "work_order",
+    keywords: ["cut from machining", "cut from", "machining"],
+    jobSource: "any",
     bg: "#dbeafe",
     border: "#2563eb",
     text: "#1e3a5f",
@@ -148,12 +148,13 @@ const TASK_TYPES: Record<TaskType, TaskTypeConfig> = {
   },
 };
 
-function matchTaskType(taskName: string, isWorkOrder: boolean): TaskType | null {
-  const lower = taskName.toLowerCase();
+function matchTaskType(taskName: string, stepName: string, isWorkOrder: boolean): TaskType | null {
+  const lowerTask = taskName.toLowerCase();
+  const lowerStep = stepName.toLowerCase();
   for (const [type, config] of Object.entries(TASK_TYPES) as [TaskType, TaskTypeConfig][]) {
     if (config.jobSource === "work_order" && !isWorkOrder) continue;
     if (config.jobSource === "parent" && isWorkOrder) continue;
-    if (config.keywords.some((kw) => lower.includes(kw))) return type;
+    if (config.keywords.some((kw) => lowerTask.includes(kw) || lowerStep.includes(kw))) return type;
   }
   return null;
 }
@@ -219,6 +220,36 @@ function getMonthWeeks(year: number, month: number): Date[][] {
     cursor = addDays(cursor, 7);
   }
   return weeks;
+}
+
+// ─── Spanning event helpers ───────────────────────────────────
+
+interface SpanPlacement {
+  event: CalendarEvent;
+  startCol: number;
+  endCol: number;
+  isClippedStart: boolean;
+  isClippedEnd: boolean;
+}
+
+function getSpanningForWeek(week: Date[], spanning: CalendarEvent[]): SpanPlacement[] {
+  const weekDates = week.map((d) => toYMD(d));
+  const weekStart = weekDates[0];
+  const weekEnd = weekDates[6];
+
+  return spanning
+    .filter((e) => e.targetDate! >= weekStart && e.startDate! <= weekEnd)
+    .map((e) => {
+      const clampedStart = e.startDate! < weekStart ? weekStart : e.startDate!;
+      const clampedEnd = e.targetDate! > weekEnd ? weekEnd : e.targetDate!;
+      return {
+        event: e,
+        startCol: weekDates.indexOf(clampedStart),
+        endCol: weekDates.indexOf(clampedEnd),
+        isClippedStart: e.startDate! < weekStart,
+        isClippedEnd: e.targetDate! > weekEnd,
+      };
+    });
 }
 
 // ─── Main Component ───────────────────────────────────────────
@@ -435,11 +466,13 @@ function CalendarContent() {
     );
   }, [allJobs, searchQuery]);
 
-  // Flat event list from filtered jobs, respecting active task type filters.
-  // Deduplicates by (displayJobNumber + taskType + date) so multiple work orders
-  // for the same parent don't produce duplicate pills for the same task type on the same day.
-  const events = useMemo<CalendarEvent[]>(() => {
-    // Build a lookup of parent job descriptions so work orders can use the parent's description
+  // Split events into single-day pills and multi-day spanning bars.
+  // Deduplicates by (displayJobNumber + taskType) for spanning and
+  // (displayJobNumber + taskType + date) for single-day events.
+  const { singleDayEvents, spanningEvents } = useMemo<{
+    singleDayEvents: CalendarEvent[];
+    spanningEvents: CalendarEvent[];
+  }>(() => {
     const parentDescriptions = new Map<string, string | null>();
     for (const job of filteredJobs) {
       if (!job.isWorkOrder) {
@@ -447,69 +480,28 @@ function CalendarContent() {
       }
     }
 
-    const result: CalendarEvent[] = [];
-    const seen = new Set<string>();
+    const single: CalendarEvent[] = [];
+    const spanning: CalendarEvent[] = [];
+    const seenSingle = new Set<string>();
+    const seenSpanning = new Set<string>();
+
     for (const job of filteredJobs) {
-      // For work orders, show the parent number (e.g. "0177" not "0177.1")
       const displayJobNumber = job.isWorkOrder
         ? (job.parentNumber ?? job.number.split(".")[0])
         : job.number;
-
-      // Use parent job description for work orders, own description for parent jobs
       const jobDescription = job.isWorkOrder
         ? (parentDescriptions.get(displayJobNumber) ?? job.description)
         : job.description;
 
       for (const task of job.tasks) {
-        const taskType = matchTaskType(task.name, job.isWorkOrder);
+        const taskType = matchTaskType(task.name, task.stepName, job.isWorkOrder);
         if (!taskType || !activeTaskTypes.has(taskType)) continue;
 
-        // Region filter: check job type names for queenstown/auckland keywords
+        // Region filter
         if (regionFilter === "qt" && !job.jobTypes.some((t) => t.toLowerCase().includes("queenstown"))) continue;
         if (regionFilter === "akl" && !job.jobTypes.some((t) => t.toLowerCase().includes("auckland"))) continue;
 
-        // Multi-day rendering for primary install: generate a pill for each day in the range
-        if (taskType === "primary_install" && task.startDate && task.targetDate && task.startDate !== task.targetDate) {
-          const start = parseYMD(task.startDate);
-          const end = parseYMD(task.targetDate);
-          let cursor = new Date(start);
-          while (cursor <= end) {
-            const dayStr = toYMD(cursor);
-            const key = `${displayJobNumber}:${taskType}:${dayStr}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              result.push({
-                taskId: task.id,
-                jobId: job.id,
-                jobNumber: job.number,
-                displayJobNumber,
-                jobDescription,
-                taskName: task.name,
-                taskType,
-                date: dayStr,
-                dateField: "startDate",
-                startDate: task.startDate,
-                targetDate: task.targetDate,
-                isWorkOrder: job.isWorkOrder,
-                jobTypes: job.jobTypes,
-              });
-            }
-            cursor = addDays(cursor, 1);
-          }
-          continue;
-        }
-
-        // Single-day rendering for all other task types
-        const date = task.startDate || task.targetDate;
-        if (!date) continue;
-        const dateField = task.startDate ? "startDate" : "targetDate";
-
-        // Deduplicate: same parent job, same task type, same date → show only once
-        const key = `${displayJobNumber}:${taskType}:${date}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-
-        result.push({
+        const eventBase = {
           taskId: task.id,
           jobId: job.id,
           jobNumber: job.number,
@@ -517,21 +509,41 @@ function CalendarContent() {
           jobDescription,
           taskName: task.name,
           taskType,
-          date,
-          dateField,
-          startDate: task.startDate,
-          targetDate: task.targetDate,
           isWorkOrder: job.isWorkOrder,
           jobTypes: job.jobTypes,
-        });
+          startDate: task.startDate,
+          targetDate: task.targetDate,
+        };
+
+        // Multi-day event → spanning bar
+        if (task.startDate && task.targetDate && task.startDate !== task.targetDate) {
+          const key = `${displayJobNumber}:${taskType}`;
+          if (!seenSpanning.has(key)) {
+            seenSpanning.add(key);
+            spanning.push({ ...eventBase, date: task.startDate, dateField: "startDate" as const });
+          }
+          continue;
+        }
+
+        // Single-day event → pill in day cell
+        // Dedup by job + taskType + date so the same task type on the same
+        // date only appears once (e.g. parent job and work order both matching).
+        const date = task.startDate || task.targetDate;
+        if (!date) continue;
+        const dateField: "startDate" | "targetDate" = task.startDate ? "startDate" : "targetDate";
+        const key = `${displayJobNumber}:${taskType}:${date}`;
+        if (seenSingle.has(key)) continue;
+        seenSingle.add(key);
+
+        single.push({ ...eventBase, date, dateField });
       }
     }
-    return result;
+    return { singleDayEvents: single, spanningEvents: spanning };
   }, [filteredJobs, activeTaskTypes, regionFilter]);
 
   const getEventsForDate = useCallback(
-    (dateStr: string) => events.filter((e) => e.date === dateStr),
-    [events]
+    (dateStr: string) => singleDayEvents.filter((e) => e.date === dateStr),
+    [singleDayEvents]
   );
 
   // ── Navigation ───────────────────────────────────────────────
@@ -864,115 +876,178 @@ function CalendarContent() {
 
         {/* Month grid */}
         <div className={isLoading && allJobs.length === 0 ? "hidden" : ""}>
-          {weeks.map((week, wi) => (
-            <div key={wi} className="grid grid-cols-7 border-b" style={{ borderColor: "#ebebea", minHeight: "120px" }}>
-              {week.map((date) => {
-                const dateStr = toYMD(date);
-                const dayEvents = getEventsForDate(dateStr);
-                const dayMiscItems = miscItems.filter((m) => m.date === dateStr);
-                const inMonth = date.getMonth() === currentMonth.getMonth();
-                const isToday = isSameDay(date, today);
-                const weekend = isWeekend(date);
-                const isDragOver = dragOverDate === dateStr;
+          {weeks.map((week, wi) => {
+            const weekSpanning = getSpanningForWeek(week, spanningEvents);
+            const weekDates = week.map((d) => toYMD(d));
+            return (
+              <div key={wi} className="border-b" style={{ borderColor: "#ebebea" }}>
+                <div className="grid grid-cols-7" style={{ minHeight: "120px" }}>
+                  {week.map((date, di) => {
+                    const dateStr = weekDates[di];
+                    const dayEvents = getEventsForDate(dateStr);
+                    const dayMiscItems = miscItems.filter((m) => m.date === dateStr);
+                    const inMonth = date.getMonth() === currentMonth.getMonth();
+                    const isToday = isSameDay(date, today);
+                    const weekend = isWeekend(date);
+                    const isDragOver = dragOverDate === dateStr;
 
-                return (
-                  <div
-                    key={dateStr}
-                    className="border-r p-1.5 transition-colors relative cursor-pointer"
-                    style={{
-                      borderColor: "#ebebea",
-                      background: isDragOver
-                        ? "#edeeed"
-                        : isToday
-                          ? "#fafaf9"
-                          : weekend
-                            ? "#f7f7f5"
-                            : inMonth
-                              ? "white"
-                              : "#f9f9f8",
-                    }}
-                    onClick={() => openMiscModal(dateStr)}
-                    onDragOver={(e) => handleDragOver(e, dateStr)}
-                    onDrop={(e) => handleDrop(e, dateStr)}
-                  >
-                    {/* Date number */}
-                    <div className="flex justify-start mb-1 pl-0.5">
-                      <span
-                        className="flex h-6 w-6 items-center justify-center rounded-full text-xs"
-                        style={{
-                          background: isToday ? "#454E49" : "transparent",
-                          color: isToday ? "white" : inMonth ? "#1a1c1a" : "#d1d5db",
-                          fontWeight: isToday ? 600 : inMonth ? 500 : 400,
-                          fontFamily: "var(--font-mono), monospace",
-                        }}
-                      >
-                        {date.getDate()}
-                      </span>
-                    </div>
-
-                    {/* Event pills */}
-                    <div className="space-y-0.5">
-                      {dayEvents.map((event) => {
-                        const cfg = TASK_TYPES[event.taskType];
-                        return (
-                          <div
-                            key={event.taskId}
-                            draggable
-                            onDragStart={() => handleDragStart(event)}
-                            onDragEnd={handleDragEnd}
-                            onClick={(e) => {
-                              if (isDraggingRef.current) return;
-                              e.stopPropagation();
-                              setEditModal({
-                                jobId: event.jobId,
-                                taskId: event.taskId,
-                                taskName: event.taskName,
-                                displayJobNumber: event.displayJobNumber,
-                                jobDescription: event.jobDescription,
-                                taskType: event.taskType,
-                                editDate: event.startDate ?? event.date,
-                              });
-                            }}
-                            className="flex items-start gap-1 rounded px-1.5 py-0.5 text-xs font-medium cursor-grab active:cursor-grabbing hover:brightness-95 transition-all"
-                            style={{
-                              background: cfg.bg,
-                              color: cfg.text,
-                              borderLeft: `3px solid ${cfg.border}`,
-                            }}
-                            title={`${event.displayJobNumber}${event.jobDescription ? ` — ${event.jobDescription}` : ""} — ${cfg.label}`}
-                          >
-                            <span className="shrink-0" style={{ fontFamily: "var(--font-mono), monospace", fontWeight: 500 }}>{event.displayJobNumber}</span>
-                            <span className="opacity-75 leading-tight">
-                              {event.jobDescription ? `${event.jobDescription} · ${event.taskName}` : event.taskName}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Misc item pills */}
-                    {dayMiscItems.map((item) => (
+                    return (
                       <div
-                        key={item.id}
-                        onClick={(e) => { e.stopPropagation(); openMiscModal(dateStr); }}
-                        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium cursor-pointer hover:brightness-95 transition-all mt-0.5"
-                        style={{ background: "#fef9c3", color: "#713f12", borderLeft: "3px solid #ca8a04" }}
-                        title={item.text}
+                        key={dateStr}
+                        className="border-r p-1.5 transition-colors relative cursor-pointer overflow-hidden"
+                        style={{
+                          borderColor: "#ebebea",
+                          background: isDragOver
+                            ? "#edeeed"
+                            : isToday
+                              ? "#fafaf9"
+                              : weekend
+                                ? "#f7f7f5"
+                                : inMonth
+                                  ? "white"
+                                  : "#f9f9f8",
+                        }}
+                        onClick={() => openMiscModal(dateStr)}
+                        onDragOver={(e) => handleDragOver(e, dateStr)}
+                        onDrop={(e) => handleDrop(e, dateStr)}
                       >
-                        <span className="opacity-60">★</span>
-                        <span className="truncate">{item.text}</span>
-                      </div>
-                    ))}
+                        {/* Date number */}
+                        <div className="flex justify-start mb-1 pl-0.5">
+                          <span
+                            className="flex h-6 w-6 items-center justify-center rounded-full text-xs"
+                            style={{
+                              background: isToday ? "#454E49" : "transparent",
+                              color: isToday ? "white" : inMonth ? "#1a1c1a" : "#d1d5db",
+                              fontWeight: isToday ? 600 : inMonth ? 500 : 400,
+                              fontFamily: "var(--font-mono), monospace",
+                            }}
+                          >
+                            {date.getDate()}
+                          </span>
+                        </div>
 
-                    {/* Drag-over indicator */}
-                    {isDragOver && (
-                      <div className="absolute inset-0 rounded border-2 pointer-events-none" style={{ borderColor: "#454E49" }} />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+                        {/* Spanning event bars (continuation strips) */}
+                        {weekSpanning.length > 0 && (
+                          <div className="space-y-0.5 mb-0.5">
+                            {weekSpanning.map((span) => {
+                              const isActive = dateStr >= weekDates[span.startCol] && dateStr <= weekDates[span.endCol];
+                              if (!isActive) return <div key={`ph-${span.event.taskId}`} style={{ height: "20px" }} />;
+
+                              const cfg = TASK_TYPES[span.event.taskType];
+                              const isFirstDay = weekDates[span.startCol] === dateStr;
+                              const isLastDay = weekDates[span.endCol] === dateStr;
+
+                              return (
+                                <div
+                                  key={`span-${span.event.taskId}`}
+                                  className="py-0.5 text-xs font-medium truncate cursor-grab active:cursor-grabbing hover:brightness-95 transition-all"
+                                  style={{
+                                    background: cfg.bg,
+                                    color: cfg.text,
+                                    borderLeft: isFirstDay ? `3px solid ${cfg.border}` : `3px solid ${cfg.bg}`,
+                                    marginLeft: isFirstDay ? 0 : "-6px",
+                                    paddingLeft: isFirstDay ? "6px" : "4px",
+                                    marginRight: isLastDay ? 0 : "-6px",
+                                    paddingRight: isLastDay ? "6px" : "4px",
+                                    borderRadius: `${isFirstDay ? "4px" : "0"} ${isLastDay ? "4px" : "0"} ${isLastDay ? "4px" : "0"} ${isFirstDay ? "4px" : "0"}`,
+                                  }}
+                                  draggable
+                                  onDragStart={() => handleDragStart(span.event)}
+                                  onDragEnd={handleDragEnd}
+                                  onClick={(e) => {
+                                    if (isDraggingRef.current) return;
+                                    e.stopPropagation();
+                                    setEditModal({
+                                      jobId: span.event.jobId,
+                                      taskId: span.event.taskId,
+                                      taskName: span.event.taskName,
+                                      displayJobNumber: span.event.displayJobNumber,
+                                      jobDescription: span.event.jobDescription,
+                                      taskType: span.event.taskType,
+                                      editDate: span.event.startDate ?? span.event.date,
+                                    });
+                                  }}
+                                  title={`${span.event.displayJobNumber}${span.event.jobDescription ? ` — ${span.event.jobDescription}` : ""} — ${cfg.label}`}
+                                >
+                                  {isFirstDay ? (
+                                    <>
+                                      <span style={{ fontFamily: "var(--font-mono), monospace", fontWeight: 500 }}>{span.event.displayJobNumber}</span>
+                                      {span.event.jobDescription && <span className="ml-1 opacity-75">{span.event.jobDescription}</span>}
+                                    </>
+                                  ) : (
+                                    <span>&nbsp;</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Single-day event pills */}
+                        <div className="space-y-0.5">
+                          {dayEvents.map((event) => {
+                            const cfg = TASK_TYPES[event.taskType];
+                            return (
+                              <div
+                                key={event.taskId}
+                                draggable
+                                onDragStart={() => handleDragStart(event)}
+                                onDragEnd={handleDragEnd}
+                                onClick={(e) => {
+                                  if (isDraggingRef.current) return;
+                                  e.stopPropagation();
+                                  setEditModal({
+                                    jobId: event.jobId,
+                                    taskId: event.taskId,
+                                    taskName: event.taskName,
+                                    displayJobNumber: event.displayJobNumber,
+                                    jobDescription: event.jobDescription,
+                                    taskType: event.taskType,
+                                    editDate: event.startDate ?? event.date,
+                                  });
+                                }}
+                                className="flex items-start gap-1 rounded px-1.5 py-0.5 text-xs font-medium cursor-grab active:cursor-grabbing hover:brightness-95 transition-all"
+                                style={{
+                                  background: cfg.bg,
+                                  color: cfg.text,
+                                  borderLeft: `3px solid ${cfg.border}`,
+                                }}
+                                title={`${event.displayJobNumber}${event.jobDescription ? ` — ${event.jobDescription}` : ""} — ${cfg.label}`}
+                              >
+                                <span className="shrink-0" style={{ fontFamily: "var(--font-mono), monospace", fontWeight: 500 }}>{event.displayJobNumber}</span>
+                                {event.jobDescription && (
+                                  <span className="opacity-75 leading-tight truncate">{event.jobDescription}</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Misc item pills */}
+                        {dayMiscItems.map((item) => (
+                          <div
+                            key={item.id}
+                            onClick={(e) => { e.stopPropagation(); openMiscModal(dateStr); }}
+                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium cursor-pointer hover:brightness-95 transition-all mt-0.5"
+                            style={{ background: "#fef9c3", color: "#713f12", borderLeft: "3px solid #ca8a04" }}
+                            title={item.text}
+                          >
+                            <span className="opacity-60">★</span>
+                            <span className="truncate">{item.text}</span>
+                          </div>
+                        ))}
+
+                        {/* Drag-over indicator */}
+                        {isDragOver && (
+                          <div className="absolute inset-0 rounded border-2 pointer-events-none" style={{ borderColor: "#454E49" }} />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* Empty state (after load) */}
@@ -1049,10 +1124,20 @@ function CalendarContent() {
                 className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </label>
-            {editModal.taskType === "primary_install" && (
+            {editModal.taskType === "primary_install" ? (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 Moving Primary Install will cascade all related task dates automatically.
               </p>
+            ) : (
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-300 rounded-lg px-3.5 py-3">
+                <svg className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M12 3l9.66 16.5a1 1 0 01-.87 1.5H3.21a1 1 0 01-.87-1.5L12 3z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">No cascade</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Only this task&apos;s date will be changed. No other task dates will be affected.</p>
+                </div>
+              </div>
             )}
           </div>
           <div className="flex gap-3">
@@ -1102,7 +1187,15 @@ function CalendarContent() {
                 Move <strong className="text-gray-800">{cascadeModal.taskName}</strong> to{" "}
                 <strong className="text-blue-600">{formatShortDate(parseYMD(cascadeModal.newDate))}</strong>?
               </p>
-              <p className="text-xs text-gray-400 mb-5">Only this task will be moved. No other dates will be affected.</p>
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-300 rounded-lg px-3.5 py-3 mb-5">
+                <svg className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M12 3l9.66 16.5a1 1 0 01-.87 1.5H3.21a1 1 0 01-.87-1.5L12 3z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">No cascade</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Only this task will be moved. No other task dates will be affected.</p>
+                </div>
+              </div>
               <div className="flex gap-3">
                 <button onClick={() => { setCascadeModal(null); setCascadeResults(null); }} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
                   Cancel
