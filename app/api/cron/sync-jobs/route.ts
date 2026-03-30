@@ -77,7 +77,7 @@ async function buildJobEntry(
     id: job.id,
     number: job.number,
     name: getJobDisplayName(job),
-    description: job.description ?? null,
+    description: job.description || job.name || null,
     isWorkOrder,
     parentNumber,
     jobTypes: (job.types || []).map((t) => t.name),

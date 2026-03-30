@@ -139,7 +139,7 @@ async function buildAllCalendarJobs(log: (msg: string) => void): Promise<Calenda
       id: job.id,
       number: job.number,
       name: getJobDisplayName(job),
-      description: job.description ?? null,
+      description: job.description || job.name || null,
       isWorkOrder,
       parentNumber,
       jobTypes: (job.types || []).map((t) => t.name),
@@ -243,7 +243,7 @@ export async function GET(request: NextRequest) {
           log(`  ${job.number} → getJobSteps failed: ${err instanceof Error ? err.message : String(err)}`);
         }
 
-        calendarJobs.push({ id: job.id, number: job.number, name: getJobDisplayName(job), description: job.description ?? null, isWorkOrder, parentNumber, jobTypes: (job.types || []).map((t) => t.name), tasks });
+        calendarJobs.push({ id: job.id, number: job.number, name: getJobDisplayName(job), description: job.description || job.name || null, isWorkOrder, parentNumber, jobTypes: (job.types || []).map((t) => t.name), tasks });
 
         if (!isWorkOrder) {
           try {

@@ -151,7 +151,7 @@ async function main() {
       continue;
     }
 
-    calendarJobs.push({ id: job.id, number: job.number, name: ref.name, isWorkOrder: isWO, parentNumber, tasks });
+    calendarJobs.push({ id: job.id, number: job.number, name: ref.name, description: job.description || job.name || null, isWorkOrder: isWO, parentNumber, tasks });
 
     // Fetch work orders for parent jobs
     if (!isWO && job.contact_id) {
@@ -183,7 +183,7 @@ async function main() {
             );
           }
           const woName = [wo.number, wo.description, wo.name].filter(Boolean).join(" — ");
-          calendarJobs.push({ id: wo.id, number: wo.number, name: woName, isWorkOrder: true, parentNumber: job.number, tasks: woTasks });
+          calendarJobs.push({ id: wo.id, number: wo.number, name: woName, description: wo.description || wo.name || null, isWorkOrder: true, parentNumber: job.number, tasks: woTasks });
         }
       }
     }
