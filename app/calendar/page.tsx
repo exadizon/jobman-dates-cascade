@@ -79,7 +79,7 @@ interface CascadeStepResult {
 
 // ─── Task Type Config ──────────────────────────────────────────
 
-type TaskType = "site_measure" | "primary_install" | "worktop_install" | "final_fit_off" | "cut_from_machining" | "edge_banding" | "pallet_collected";
+type TaskType = "site_measure" | "primary_install" | "worktop_install" | "final_fit_off" | "cut_from_machining" | "pallet_collected" | "edge_banding";
 
 interface TaskTypeConfig {
   label: string;
@@ -290,7 +290,7 @@ function CalendarContent() {
   const [showDebug, setShowDebug] = useState(false);
 
   const [activeTaskTypes, setActiveTaskTypes] = useState<Set<TaskType>>(
-    () => new Set<TaskType>(["site_measure", "primary_install", "worktop_install", "final_fit_off", "cut_from_machining", "edge_banding", "pallet_collected"])
+    () => new Set<TaskType>(["site_measure", "primary_install", "worktop_install", "final_fit_off", "cut_from_machining", "pallet_collected"])
   );
 
   // null = show all, "qt" = Queenstown only, "akl" = Auckland only
@@ -874,7 +874,7 @@ function CalendarContent() {
 
         {/* Task type filters */}
         <div className="flex items-center gap-2 flex-wrap">
-          {(Object.entries(TASK_TYPES) as [TaskType, TaskTypeConfig][]).map(([type, config]) => {
+          {(Object.entries(TASK_TYPES) as [TaskType, TaskTypeConfig][]).filter(([type]) => type !== "edge_banding").map(([type, config]) => {
             const active = activeTaskTypes.has(type);
             return (
               <button
@@ -1254,8 +1254,12 @@ function CalendarContent() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M12 3l9.66 16.5a1 1 0 01-.87 1.5H3.21a1 1 0 01-.87-1.5L12 3z" />
                 </svg>
                 <div>
-                  <p className="text-sm font-semibold text-amber-800">No cascade</p>
-                  <p className="text-xs text-amber-700 mt-0.5">Only this task&apos;s date will be changed. No other task dates will be affected.</p>
+                  <p className="text-sm font-semibold text-amber-800">{LINKED_TASKS[editModal.taskType] ? "Linked move" : "No cascade"}</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {LINKED_TASKS[editModal.taskType]
+                      ? `This will also move ${LINKED_TASKS[editModal.taskType]!.map((lt) => TASK_TYPES[lt]?.label || lt).join(", ")} to the same date.`
+                      : "Only this task's date will be changed. No other task dates will be affected."}
+                  </p>
                 </div>
               </div>
             )}
