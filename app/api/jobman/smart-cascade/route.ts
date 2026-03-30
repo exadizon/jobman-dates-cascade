@@ -220,8 +220,17 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        // Find the LAST task in the work order (e.g., "Site Offload")
-        const lastTask = woTasks[woTasks.length - 1];
+        // Find the "Site Off Load" task — this is the real last meaningful task.
+        // "Work Order Cancelled" sits after it but is a data-gathering task
+        // that shouldn't participate in the cascade.
+        const EXCLUDED_TASKS = ["work order cancelled"];
+        const siteOffLoadTask = woTasks.find((t) =>
+          t.name.toLowerCase().includes("site off load") ||
+          t.name.toLowerCase().includes("site offload")
+        );
+        const lastTask = siteOffLoadTask
+          ?? woTasks.filter((t) => !EXCLUDED_TASKS.some((ex) => t.name.toLowerCase().includes(ex))).pop()
+          ?? woTasks[woTasks.length - 1];
 
         console.log(`[SmartCascade] Step 3: WO ${wo.number} — setting "${lastTask.name}" start_date = ${newStartDate}`);
 

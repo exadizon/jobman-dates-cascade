@@ -79,7 +79,7 @@ interface CascadeStepResult {
 
 // ─── Task Type Config ──────────────────────────────────────────
 
-type TaskType = "site_measure" | "primary_install" | "worktop_install" | "final_fit_off" | "cut_from_machining" | "pallet_collected";
+type TaskType = "site_measure" | "primary_install" | "worktop_install" | "final_fit_off" | "cut_from_machining" | "edge_banding" | "pallet_collected";
 
 interface TaskTypeConfig {
   label: string;
@@ -137,6 +137,15 @@ const TASK_TYPES: Record<TaskType, TaskTypeConfig> = {
     text: "#1e3a5f",
     dot: "#2563eb",
   },
+  edge_banding: {
+    label: "Edge Banding",
+    keywords: ["edge banding", "edgebanding"],
+    jobSource: "any",
+    bg: "#fef3c7",
+    border: "#d97706",
+    text: "#78350f",
+    dot: "#d97706",
+  },
   pallet_collected: {
     label: "Pallet Collected",
     keywords: ["pallet collected"],
@@ -158,6 +167,12 @@ function matchTaskType(taskName: string, stepName: string, isWorkOrder: boolean)
   }
   return null;
 }
+
+// When a task of the key type is moved, also move tasks of the value types
+// on the same job to the same date.
+const LINKED_TASKS: Partial<Record<TaskType, TaskType[]>> = {
+  cut_from_machining: ["edge_banding"],
+};
 
 // ─── Date Helpers ─────────────────────────────────────────────
 
@@ -275,7 +290,7 @@ function CalendarContent() {
   const [showDebug, setShowDebug] = useState(false);
 
   const [activeTaskTypes, setActiveTaskTypes] = useState<Set<TaskType>>(
-    () => new Set<TaskType>(["site_measure", "primary_install", "worktop_install", "final_fit_off", "cut_from_machining", "pallet_collected"])
+    () => new Set<TaskType>(["site_measure", "primary_install", "worktop_install", "final_fit_off", "cut_from_machining", "edge_banding", "pallet_collected"])
   );
 
   // null = show all, "qt" = Queenstown only, "akl" = Auckland only
@@ -293,6 +308,7 @@ function CalendarContent() {
   } | null>(null);
   const [isCascading, setIsCascading] = useState(false);
   const [cascadeResults, setCascadeResults] = useState<CascadeStepResult[] | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const [editModal, setEditModal] = useState<{
     jobId: string; taskId: string; taskName: string; displayJobNumber: string; jobDescription: string | null;
@@ -368,7 +384,19 @@ function CalendarContent() {
       if (data.error) {
         setError(data.error);
       } else if (data.noCache) {
-        setError("Calendar data is still syncing — please check back in a few minutes, or search for a specific job.");
+        // No cache yet — auto-trigger an incremental sync
+        setError("Syncing jobs from Jobman… this may take a moment.");
+        fetch("/api/cron/sync-jobs?mode=incremental")
+          .then(() => fetch(`/api/jobman/calendar`))
+          .then((r) => r.json())
+          .then((d) => {
+            if (d.jobs?.length) {
+              setAllJobs(d.jobs);
+              try { localStorage.setItem("calendar_last_jobs", JSON.stringify(d.jobs)); } catch { /* storage full */ }
+              setError(null);
+            }
+          })
+          .catch(() => { /* ignore — user can use Sync Now */ });
       } else {
         const jobs = data.jobs || [];
         setAllJobs(jobs);
@@ -400,6 +428,16 @@ function CalendarContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally run once on mount only
 
+  // Poll Redis cache every 5 minutes so the calendar stays fresh
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Only poll when not actively searching (search already fetches live data)
+      if (!searchQuery.trim()) fetchJobs();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
+
   // Debounced search — updates URL and triggers API call after 500ms
   const handleSearchInput = useCallback((value: string) => {
     setSearchQuery(value);
@@ -424,6 +462,19 @@ function CalendarContent() {
       }
     }, 500);
   }, [fetchJobs, router]);
+
+  // Trigger an incremental sync from Jobman → Redis, then reload
+  const triggerSync = useCallback(async () => {
+    setIsSyncing(true);
+    setError(null);
+    try {
+      await fetch("/api/cron/sync-jobs?mode=incremental");
+      await fetchJobs();
+    } catch {
+      setError("Sync failed — try again or search for a specific job.");
+    }
+    setIsSyncing(false);
+  }, [fetchJobs]);
 
   // After a cascade/move, reload the affected job's data.
   // In search mode: re-run the active search (gets fresh results for all visible jobs).
@@ -526,12 +577,13 @@ function CalendarContent() {
         }
 
         // Single-day event → pill in day cell
-        // Dedup by job + taskType + date so the same task type on the same
-        // date only appears once (e.g. parent job and work order both matching).
+        // Dedup by job + taskType (no date) so each job shows at most one pill
+        // per task type — prevents the same job appearing on multiple days when
+        // parent and work order both match.
         const date = task.startDate || task.targetDate;
         if (!date) continue;
         const dateField: "startDate" | "targetDate" = task.startDate ? "startDate" : "targetDate";
-        const key = `${displayJobNumber}:${taskType}:${date}`;
+        const key = `${displayJobNumber}:${taskType}`;
         if (seenSingle.has(key)) continue;
         seenSingle.add(key);
 
@@ -633,14 +685,40 @@ function CalendarContent() {
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Failed to move task");
+
+      // Move linked tasks (e.g. Edge Banding when Cut is moved)
+      const linkedResults: CascadeStepResult[] = [];
+      const linkedTypes = LINKED_TASKS[cascadeModal.taskType];
+      if (linkedTypes?.length) {
+        const job = allJobs.find((j) => j.id === cascadeModal.jobId);
+        if (job) {
+          for (const linkedType of linkedTypes) {
+            const linkedTask = job.tasks.find((t) => {
+              const mt = matchTaskType(t.name, t.stepName, job.isWorkOrder);
+              return mt === linkedType;
+            });
+            if (linkedTask) {
+              try {
+                await fetch("/api/jobman/task-date", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ jobId: job.id, taskId: linkedTask.id, startDate: cascadeModal.newDate, targetDate: cascadeModal.newDate, direction: "none" }),
+                });
+                linkedResults.push({ step: 2, description: `Linked: moved "${linkedTask.name}" to ${formatShortDate(parseYMD(cascadeModal.newDate))}`, success: true, dateSet: cascadeModal.newDate });
+              } catch {
+                linkedResults.push({ step: 2, description: `Linked: failed to move "${linkedTask.name}"`, success: false });
+              }
+            }
+          }
+        }
+      }
+
       await new Promise((r) => setTimeout(r, 800));
       await reloadJobs(parentNum);
-      setCascadeResults([{
-        step: 1,
-        description: `Moved "${cascadeModal.taskName}" to ${formatShortDate(parseYMD(cascadeModal.newDate))}`,
-        success: true,
-        dateSet: cascadeModal.newDate,
-      }]);
+      setCascadeResults([
+        { step: 1, description: `Moved "${cascadeModal.taskName}" to ${formatShortDate(parseYMD(cascadeModal.newDate))}`, success: true, dateSet: cascadeModal.newDate },
+        ...linkedResults,
+      ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to move task.");
       setCascadeModal(null);
@@ -672,9 +750,40 @@ function CalendarContent() {
         });
         const data = await res.json();
         if (!data.success) throw new Error(data.error || "Failed to update dates");
+
+        // Move linked tasks (e.g. Edge Banding when Cut is moved)
+        const linkedResults: CascadeStepResult[] = [];
+        const linkedTypes = LINKED_TASKS[editModal.taskType];
+        if (linkedTypes?.length) {
+          const job = allJobs.find((j) => j.id === editModal.jobId);
+          if (job) {
+            for (const linkedType of linkedTypes) {
+              const linkedTask = job.tasks.find((t) => {
+                const mt = matchTaskType(t.name, t.stepName, job.isWorkOrder);
+                return mt === linkedType;
+              });
+              if (linkedTask) {
+                try {
+                  await fetch("/api/jobman/task-date", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ jobId: job.id, taskId: linkedTask.id, startDate: editModal.editDate, targetDate: editModal.editDate, direction: "none" }),
+                  });
+                  linkedResults.push({ step: 2, description: `Linked: moved "${linkedTask.name}" to ${formatShortDate(parseYMD(editModal.editDate))}`, success: true, dateSet: editModal.editDate });
+                } catch {
+                  linkedResults.push({ step: 2, description: `Linked: failed to move "${linkedTask.name}"`, success: false });
+                }
+              }
+            }
+          }
+        }
+
         await new Promise((r) => setTimeout(r, 800));
         await reloadJobs(editModal.displayJobNumber);
-        setCascadeResults([{ step: 1, description: `Moved "${editModal.taskName}" to ${formatShortDate(parseYMD(editModal.editDate))}`, success: true, dateSet: editModal.editDate }]);
+        setCascadeResults([
+          { step: 1, description: `Moved "${editModal.taskName}" to ${formatShortDate(parseYMD(editModal.editDate))}`, success: true, dateSet: editModal.editDate },
+          ...linkedResults,
+        ]);
       }
       setEditModal(null);
     } catch (err) {
@@ -682,7 +791,7 @@ function CalendarContent() {
       setEditModal(null);
     }
     setIsCascading(false);
-  }, [editModal, reloadJobs]);
+  }, [editModal, reloadJobs, allJobs]);
 
   // ── Render ───────────────────────────────────────────────────
 
@@ -813,12 +922,23 @@ function CalendarContent() {
           })}
         </div>
 
-        {/* Job count badge */}
-        {allJobs.length > 0 && (
-          <span className="ml-auto text-xs" style={{ color: "#9a9e9b" }}>
-            {filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}
-          </span>
-        )}
+        {/* Sync + Job count */}
+        <div className="ml-auto flex items-center gap-3">
+          <button
+            onClick={triggerSync}
+            disabled={isSyncing}
+            className="rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-gray-50 disabled:opacity-50"
+            style={{ borderColor: "#e4e4e0", color: "#4a4f4b" }}
+            title="Sync latest jobs from Jobman"
+          >
+            {isSyncing ? "Syncing…" : "Sync Now"}
+          </button>
+          {allJobs.length > 0 && (
+            <span className="text-xs" style={{ color: "#9a9e9b" }}>
+              {filteredJobs.length} job{filteredJobs.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── Debug log panel ───────────────────────── */}
@@ -1192,8 +1312,12 @@ function CalendarContent() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M12 3l9.66 16.5a1 1 0 01-.87 1.5H3.21a1 1 0 01-.87-1.5L12 3z" />
                 </svg>
                 <div>
-                  <p className="text-sm font-semibold text-amber-800">No cascade</p>
-                  <p className="text-xs text-amber-700 mt-0.5">Only this task will be moved. No other task dates will be affected.</p>
+                  <p className="text-sm font-semibold text-amber-800">{LINKED_TASKS[cascadeModal.taskType] ? "Linked move" : "No cascade"}</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {LINKED_TASKS[cascadeModal.taskType]
+                      ? `This will also move ${LINKED_TASKS[cascadeModal.taskType]!.map((lt) => TASK_TYPES[lt]?.label || lt).join(", ")} to the same date.`
+                      : "Only this task will be moved. No other task dates will be affected."}
+                  </p>
                 </div>
               </div>
               <div className="flex gap-3">

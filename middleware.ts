@@ -13,6 +13,8 @@ export function middleware(req: NextRequest) {
     url.pathname === "/login" ||
     url.pathname.startsWith("/_next/") ||
     url.pathname.startsWith("/api/login") ||
+    url.pathname.startsWith("/api/cron/") ||
+    url.pathname.startsWith("/api/auth/") ||
     url.pathname.match(/\.(png|jpg|jpeg|gif|svg|ico)$/)
   ) {
     return NextResponse.next();
