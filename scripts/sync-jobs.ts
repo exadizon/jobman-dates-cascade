@@ -162,7 +162,7 @@ async function main() {
         const related: { id: string; number: string; description: string; name: string }[] = (relData.jobs?.data || relData.data || []).filter((j: { id: string }) => j.id !== job.id);
         const jobWOs = related
           .filter((j) => j.number.startsWith(job.number + "."))
-          .slice(0, 6);
+          .slice(0, 50);
 
         for (const wo of jobWOs) {
           if (processedIds.has(wo.id)) continue;
