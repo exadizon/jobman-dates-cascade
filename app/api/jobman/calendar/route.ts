@@ -39,7 +39,7 @@ const REDIS_CACHE_KEY = "jobman:calendar:all";
 const CACHE_TTL_SECONDS = 60 * 60; // 1 hour
 const DELAY_BETWEEN_JOBS_MS = 200;
 const DELAY_BETWEEN_WORK_ORDERS_MS = 150;
-const MAX_WORK_ORDERS_PER_JOB = 6;
+const MAX_WORK_ORDERS_PER_JOB = 50;
 
 function getRedis() {
   return new Redis({

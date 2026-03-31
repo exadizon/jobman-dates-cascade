@@ -549,8 +549,8 @@ function CalendarContent() {
         if (!taskType || !activeTaskTypes.has(taskType)) continue;
 
         // Region filter
-        if (regionFilter === "qt" && !job.jobTypes.some((t) => t.toLowerCase().includes("queenstown"))) continue;
-        if (regionFilter === "akl" && !job.jobTypes.some((t) => t.toLowerCase().includes("auckland"))) continue;
+        if (regionFilter === "qt" && !(job.jobTypes ?? []).some((t) => t.toLowerCase().includes("queenstown"))) continue;
+        if (regionFilter === "akl" && !(job.jobTypes ?? []).some((t) => t.toLowerCase().includes("auckland"))) continue;
 
         const eventBase = {
           taskId: task.id,

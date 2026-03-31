@@ -1,3 +1,5 @@
+export const maxDuration = 300; // Vercel Pro: allow up to 5 min for full sync
+
 import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
 import {
@@ -15,9 +17,9 @@ import type { CalendarJob, CalendarTask } from "@/app/api/jobman/calendar/route"
 
 const REDIS_CACHE_KEY = "jobman:calendar:all";
 const CACHE_TTL_SECONDS = 60 * 60 * 25; // 25 hours — survives until next cron
-const DELAY_BETWEEN_JOBS_MS = 300;
-const DELAY_BETWEEN_WORK_ORDERS_MS = 200;
-const MAX_WORK_ORDERS_PER_JOB = 6;
+const DELAY_BETWEEN_JOBS_MS = 100;
+const DELAY_BETWEEN_WORK_ORDERS_MS = 50;
+const MAX_WORK_ORDERS_PER_JOB = 50;
 
 function getRedis() {
   return new Redis({
