@@ -1,4 +1,19 @@
 /**
+ * Jobman is a NZ-based system. Dates are stored as NZ local time but may be
+ * returned as UTC ISO strings (e.g. midnight NZ = 12:00 previous day UTC).
+ * Parsing with the NZ timezone ensures the extracted date matches Jobman's UI.
+ */
+const JOBMAN_TIMEZONE = process.env.JOBMAN_TIMEZONE || "Pacific/Auckland";
+
+export function parseJobmanDate(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  if (!dateStr.includes("T")) return dateStr; // already a bare date
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr.split("T")[0]; // unparseable — best-effort fallback
+  return new Intl.DateTimeFormat("en-CA", { timeZone: JOBMAN_TIMEZONE }).format(d);
+}
+
+/**
  * Calculate the day offset between two dates.
  * Positive = future, negative = past.
  */

@@ -14,6 +14,7 @@ import {
 import type { JobTask } from "@/lib/jobman";
 import type { JobmanJob } from "@/types/jobman";
 import type { CalendarJob, CalendarTask } from "@/app/api/jobman/calendar/route";
+import { parseJobmanDate } from "@/lib/date-utils";
 
 const REDIS_CACHE_KEY = "jobman:calendar:all";
 const CACHE_TTL_SECONDS = 60 * 60 * 25; // 25 hours — survives until next cron
@@ -26,16 +27,6 @@ function getRedis() {
     url: process.env.KV_REST_API_URL!,
     token: process.env.KV_REST_API_TOKEN!,
   });
-}
-
-const JOBMAN_TIMEZONE = process.env.JOBMAN_TIMEZONE || "Pacific/Auckland";
-
-function parseJobmanDate(dateStr: string | null): string | null {
-  if (!dateStr) return null;
-  if (!dateStr.includes("T")) return dateStr;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr.split("T")[0];
-  return new Intl.DateTimeFormat("en-CA", { timeZone: JOBMAN_TIMEZONE }).format(d);
 }
 
 function mapTask(task: JobTask, stepName: string): CalendarTask {

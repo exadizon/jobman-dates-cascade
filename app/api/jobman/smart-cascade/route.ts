@@ -8,6 +8,7 @@ import {
   filterWorkOrders,
 } from "@/lib/jobman";
 import type { JobTask } from "@/lib/jobman";
+import { parseJobmanDate } from "@/lib/date-utils";
 
 interface SmartCascadeRequest {
   jobId: string;
@@ -161,7 +162,7 @@ export async function POST(request: NextRequest) {
       : null;
 
     if (nextTask && anchorTask.target_date) {
-      const anchorFinishDate = anchorTask.target_date.split("T")[0];
+      const anchorFinishDate = parseJobmanDate(anchorTask.target_date) ?? anchorTask.target_date.split("T")[0];
       console.log(`[SmartCascade] Step 2: Setting ${nextTask.name} start_date = ${anchorFinishDate} (anchor finish date)`);
 
       try {

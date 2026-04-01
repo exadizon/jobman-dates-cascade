@@ -2,6 +2,7 @@ import "server-only";
 
 import type { JobmanJob } from "@/types/jobman";
 import { getAccessToken } from "./oauth-tokens";
+import { parseJobmanDate } from "./date-utils";
 
 const BASE_URL = (
   process.env.JOBMAN_BASE_URL || "https://api.jobmanapp.com"
@@ -94,6 +95,15 @@ export interface JobStep {
 }
 
 export type RecalculateDirection = "all" | "after" | "before" | "none";
+
+/** Normalize Jobman UTC ISO dates on a task to bare YYYY-MM-DD strings. */
+function normalizeTaskDates(task: JobTask): JobTask {
+  return {
+    ...task,
+    start_date: parseJobmanDate(task.start_date),
+    target_date: parseJobmanDate(task.target_date),
+  };
+}
 
 /**
  * Given a parent job number (e.g., "0177"), return only work orders
@@ -269,7 +279,7 @@ export async function getJobSteps(jobId: string): Promise<JobStep[]> {
       throw new Error(`Failed to fetch job tasks: ${response.status}`);
     }
     const tasksData = await tasksResponse.json();
-    const tasks: JobTask[] = tasksData.tasks?.data || tasksData.data || [];
+    const tasks: JobTask[] = (tasksData.tasks?.data || tasksData.data || []).map(normalizeTaskDates);
     // Wrap in a single virtual step
     return [{
       id: "all-tasks",
@@ -282,7 +292,11 @@ export async function getJobSteps(jobId: string): Promise<JobStep[]> {
   }
 
   const data = await response.json();
-  return data.steps || data.data || [];
+  const steps: JobStep[] = data.steps || data.data || [];
+  return steps.map((step) => ({
+    ...step,
+    tasks: (step.tasks || []).map(normalizeTaskDates),
+  }));
 }
 
 /**
@@ -346,7 +360,7 @@ export async function updateTaskTargetDate(
   }
 
   const data = await response.json();
-  return data.task || data;
+  return normalizeTaskDates(data.task || data);
 }
 
 /**
@@ -384,7 +398,7 @@ export async function updateTaskStartDate(
   }
 
   const data = await response.json();
-  return data.task || data;
+  return normalizeTaskDates(data.task || data);
 }
 
 export { getJobDisplayName };
