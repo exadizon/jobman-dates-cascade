@@ -10,6 +10,7 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 import { Redis } from "@upstash/redis";
+import { parseJobmanDate } from "../lib/date-utils";
 
 const REDIS_CACHE_KEY = "jobman:calendar:all";
 const CACHE_TTL_SECONDS = 60 * 60 * 25; // 25 hours
@@ -142,8 +143,8 @@ async function main() {
           id: t.id,
           name: t.name,
           stepName: step.name,
-          startDate: t.start_date ? t.start_date.split("T")[0] : null,
-          targetDate: t.target_date ? t.target_date.split("T")[0] : null,
+          startDate: parseJobmanDate(t.start_date),
+          targetDate: parseJobmanDate(t.target_date),
           status: t.status,
           progress: t.progress,
           locked: t.target_date_locked,
@@ -183,8 +184,8 @@ async function main() {
             woTasks = woSteps.flatMap((step: { name: string; tasks: { id: string; name: string; start_date: string; target_date: string; status: string; progress: number; target_date_locked: boolean }[] }) =>
               (step.tasks || []).map((t: { id: string; name: string; start_date: string; target_date: string; status: string; progress: number; target_date_locked: boolean }) => ({
                 id: t.id, name: t.name, stepName: step.name,
-                startDate: t.start_date ? t.start_date.split("T")[0] : null,
-                targetDate: t.target_date ? t.target_date.split("T")[0] : null,
+                startDate: parseJobmanDate(t.start_date),
+                targetDate: parseJobmanDate(t.target_date),
                 status: t.status, progress: t.progress, locked: t.target_date_locked,
               }))
             );
