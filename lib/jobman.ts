@@ -322,7 +322,7 @@ export async function getRelatedJobs(
 
   const data = await response.json();
   const jobs: JobmanJob[] = data.jobs?.data || data.data || [];
-  return jobs.filter((job) => job.id !== parentJob.id);
+  return jobs.filter((job) => job.id !== parentJob.id && !job.trashed_at);
 }
 
 /**

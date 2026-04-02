@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Redis } from "@upstash/redis";
 import {
   getJob,
   getJobSteps,
@@ -9,6 +10,10 @@ import {
 } from "@/lib/jobman";
 import type { JobTask } from "@/lib/jobman";
 import { parseJobmanDate } from "@/lib/date-utils";
+import type { CalendarJob, CalendarTask } from "@/app/api/jobman/calendar/route";
+
+const REDIS_CACHE_KEY = "jobman:calendar:all";
+const CACHE_TTL_SECONDS = 60 * 60 * 25;
 
 interface SmartCascadeRequest {
   jobId: string;
@@ -262,6 +267,42 @@ export async function POST(request: NextRequest) {
 
     const successCount = results.filter((r) => r.success).length;
     const failCount = results.filter((r) => !r.success).length;
+
+    // Patch calendar cache: re-fetch tasks for parent + all work orders and update
+    // their entries in-place so the calendar reflects new dates immediately.
+    try {
+      const redis = new Redis({
+        url: process.env.KV_REST_API_URL!,
+        token: process.env.KV_REST_API_TOKEN!,
+      });
+      const cached = await redis.get<CalendarJob[]>(REDIS_CACHE_KEY);
+      if (cached) {
+        const jobIdsToRefresh = [jobId, ...workOrders.map((wo) => wo.id)];
+        const updatedCache = cached.map((entry) => entry); // shallow copy
+        for (const jid of jobIdsToRefresh) {
+          try {
+            const steps = await getJobSteps(jid);
+            const tasks: CalendarTask[] = steps.flatMap((step) =>
+              (step.tasks || []).map((t: JobTask) => ({
+                id: t.id,
+                name: t.name,
+                stepName: step.name,
+                startDate: parseJobmanDate(t.start_date),
+                targetDate: parseJobmanDate(t.target_date),
+                status: t.status,
+                progress: t.progress,
+                locked: t.target_date_locked,
+              }))
+            );
+            const idx = updatedCache.findIndex((j) => j.id === jid);
+            if (idx !== -1) updatedCache[idx] = { ...updatedCache[idx], tasks };
+          } catch { /* skip this job if fetch fails */ }
+        }
+        await redis.set(REDIS_CACHE_KEY, updatedCache, { ex: CACHE_TTL_SECONDS });
+      }
+    } catch {
+      // Best-effort — don't fail the cascade if cache patch fails
+    }
 
     return NextResponse.json({
       steps: results,

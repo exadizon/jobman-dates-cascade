@@ -125,6 +125,12 @@ async function main() {
     const jobData = await jobRes.json();
     const job = jobData.job || jobData;
 
+    // Skip soft-deleted jobs
+    if (job.trashed_at) {
+      await sleep(200);
+      continue;
+    }
+
     // Fetch steps/tasks
     const stepsRes = await fetchWithRetry(orgUrl(`/jobs/${ref.id}/steps`), { headers });
     let tasks: object[] = [];
@@ -160,7 +166,7 @@ async function main() {
       const relRes = await fetchWithRetry(orgUrl(`/jobs?filter=${encodeURIComponent(filter)}&limit=100`), { headers });
       if (relRes.ok) {
         const relData = await relRes.json();
-        const related: { id: string; number: string; description: string; name: string }[] = (relData.jobs?.data || relData.data || []).filter((j: { id: string }) => j.id !== job.id);
+        const related: { id: string; number: string; description: string; name: string; trashed_at: string | null }[] = (relData.jobs?.data || relData.data || []).filter((j: { id: string; trashed_at: string | null }) => j.id !== job.id && !j.trashed_at);
         const jobWOs = related
           .filter((j) => j.number.startsWith(job.number + "."))
           .slice(0, 50);

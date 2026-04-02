@@ -1,0 +1,31 @@
+name: Sync Calendar Jobs
+
+on:
+  schedule:
+    - cron: '0 12 * * *' # noon UTC = midnight NZ — runs daily
+  workflow_dispatch: # allows manual trigger from the GitHub Actions UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run full sync
+        run: npx tsx scripts/sync-jobs.ts
+        env:
+          JOBMAN_BASE_URL: ${{ secrets.JOBMAN_BASE_URL }}
+          JOBMAN_ORGANISATION_ID: ${{ secrets.JOBMAN_ORGANISATION_ID }}
+          JOBMAN_CLIENT_ID: ${{ secrets.JOBMAN_CLIENT_ID }}
+          JOBMAN_CLIENT_SECRET: ${{ secrets.JOBMAN_CLIENT_SECRET }}
+          KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
+          KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
