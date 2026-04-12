@@ -665,6 +665,7 @@ function CalendarContent() {
         body: JSON.stringify({ jobId: cascadeModal.jobId, anchorTaskId: cascadeModal.taskId, newStartDate: cascadeModal.newDate }),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Cascade failed (${res.status})`);
       await new Promise((r) => setTimeout(r, 800));
       await reloadJobs(parentNum);
       setCascadeResults(data.steps || []);
@@ -746,6 +747,7 @@ function CalendarContent() {
           body: JSON.stringify({ jobId: editModal.jobId, anchorTaskId: editModal.taskId, newStartDate: editModal.editDate }),
         });
         const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Cascade failed (${res.status})`);
         await new Promise((r) => setTimeout(r, 800));
         await reloadJobs(editModal.displayJobNumber);
         setCascadeResults(data.steps || []);

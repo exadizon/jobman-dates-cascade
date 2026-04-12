@@ -162,13 +162,8 @@ export async function POST(request: NextRequest) {
         const after = await updateTaskTargetDate(jobId, taskBefore.id, dayBefore, "before");
         const returnedStart = parseJobmanDate(after.start_date);
         const returnedTarget = parseJobmanDate(after.target_date);
-
-        // H2 check: did the anchor shift because of this cascade?
-        const postAnchorSteps = await getJobSteps(jobId);
-        const postAnchor = postAnchorSteps.flatMap((s) => s.tasks || []).find((t) => t.id === anchorTaskId);
-        const anchorStartNow = postAnchor ? parseJobmanDate(postAnchor.start_date) : null;
         console.log(
-          `[SmartCascade] Step 1b DRIFT check: sent_target=${dayBefore} returned_start=${returnedStart} returned_target=${returnedTarget} anchor_start_now=${anchorStartNow} (expected ${newStartDate})`
+          `[SmartCascade] Step 1b: sent_target=${dayBefore} returned_start=${returnedStart} returned_target=${returnedTarget}`
         );
 
         results.push({
@@ -183,7 +178,6 @@ export async function POST(request: NextRequest) {
           returnedStart,
           returnedTarget,
           drift: driftLabel(dayBefore, returnedTarget),
-          freshStart: anchorStartNow,
         });
       } catch (error) {
         results.push({
@@ -211,6 +205,9 @@ export async function POST(request: NextRequest) {
         success: false,
         error: "Could not find anchor task after update",
       });
+      if (anchorLocked) {
+        try { await unlockTaskTargetDate(jobId, anchorTaskId); } catch { /* best-effort */ }
+      }
       return NextResponse.json({
         steps: results,
         summary: { total: 2, success: 1, failed: 1 },
@@ -231,13 +228,8 @@ export async function POST(request: NextRequest) {
         const after = await updateTaskStartDate(jobId, nextTask.id, anchorFinishDate, "after");
         const returnedStart = parseJobmanDate(after.start_date);
         const returnedTarget = parseJobmanDate(after.target_date);
-
-        // H2 check: did the anchor shift because of this cascade?
-        const postAnchorSteps = await getJobSteps(jobId);
-        const postAnchor = postAnchorSteps.flatMap((s) => s.tasks || []).find((t) => t.id === anchorTaskId);
-        const anchorStartNow = postAnchor ? parseJobmanDate(postAnchor.start_date) : null;
         console.log(
-          `[SmartCascade] Step 2 DRIFT check: sent_start=${anchorFinishDate} returned_start=${returnedStart} returned_target=${returnedTarget} anchor_start_now=${anchorStartNow} (expected ${newStartDate})`
+          `[SmartCascade] Step 2: sent_start=${anchorFinishDate} returned_start=${returnedStart} returned_target=${returnedTarget}`
         );
 
         results.push({
@@ -252,7 +244,6 @@ export async function POST(request: NextRequest) {
           returnedStart,
           returnedTarget,
           drift: driftLabel(anchorFinishDate, returnedStart),
-          freshStart: anchorStartNow,
         });
       } catch (error) {
         results.push({
@@ -315,20 +306,8 @@ export async function POST(request: NextRequest) {
         const after = await updateTaskStartDate(wo.id, lastTask.id, newStartDate, "before");
         const returnedStart = parseJobmanDate(after.start_date);
         const returnedTarget = parseJobmanDate(after.target_date);
-
-        // H5 check: re-fetch WO last task to see if Jobman finalised at a different date
-        let freshStart: string | null = null;
-        let freshTarget: string | null = null;
-        try {
-          const freshSteps = await getJobSteps(wo.id);
-          const freshTask = freshSteps.flatMap((s) => s.tasks || []).find((t) => t.id === lastTask.id);
-          if (freshTask) {
-            freshStart = parseJobmanDate(freshTask.start_date);
-            freshTarget = parseJobmanDate(freshTask.target_date);
-          }
-        } catch { /* ignore */ }
         console.log(
-          `[SmartCascade] Step 3 DRIFT check: WO=${wo.number} sent=${newStartDate} returned_start=${returnedStart} fresh_start=${freshStart} drift=${driftLabel(newStartDate, returnedStart)} fresh_drift=${driftLabel(newStartDate, freshStart)}`
+          `[SmartCascade] Step 3: WO=${wo.number} sent=${newStartDate} returned_start=${returnedStart} drift=${driftLabel(newStartDate, returnedStart)}`
         );
 
         results.push({
@@ -344,8 +323,6 @@ export async function POST(request: NextRequest) {
           returnedStart,
           returnedTarget,
           drift: driftLabel(newStartDate, returnedStart),
-          freshStart,
-          freshTarget,
         });
       } catch (error) {
         results.push({
@@ -417,6 +394,8 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    // Best-effort unlock on unexpected failure so anchor doesn't stay locked
+    try { await unlockTaskTargetDate(jobId, anchorTaskId); } catch { /* ignore */ }
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Smart cascade failed",
