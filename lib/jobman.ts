@@ -326,6 +326,49 @@ export async function getRelatedJobs(
 }
 
 /**
+ * Lock a task's target_date, preventing Jobman's auto-recalculation engine
+ * from overriding it when cascades fire on the same job.
+ * Uses: PUT /api/v1/organisations/{orgId}/jobs/{jobId}/tasks/{taskId}/lock-target-date
+ */
+export async function lockTaskTargetDate(
+  jobId: string,
+  taskId: string
+): Promise<void> {
+  const url = orgUrl(`/jobs/${jobId}/tasks/${taskId}/lock-target-date`);
+  console.log(`[Jobman] PUT lock-target-date ${taskId}`);
+  const response = await fetchWithRetry(url, {
+    method: "PUT",
+    headers: await getHeaders(),
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to lock task target date: ${response.status} — ${errorBody}`);
+  }
+}
+
+/**
+ * Unlock a task's target_date so future cascades can recalculate it normally.
+ * Uses: PUT /api/v1/organisations/{orgId}/jobs/{jobId}/tasks/{taskId}/unlock-target-date
+ */
+export async function unlockTaskTargetDate(
+  jobId: string,
+  taskId: string
+): Promise<void> {
+  const url = orgUrl(`/jobs/${jobId}/tasks/${taskId}/unlock-target-date`);
+  console.log(`[Jobman] PUT unlock-target-date ${taskId}`);
+  const response = await fetchWithRetry(url, {
+    method: "PUT",
+    headers: await getHeaders(),
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to unlock task target date: ${response.status} — ${errorBody}`);
+  }
+}
+
+/**
  * Update a job task's target date.
  * Uses: PUT /api/v1/organisations/{orgId}/jobs/{jobId}/tasks/{taskId}/target-date
  *
@@ -347,7 +390,7 @@ export async function updateTaskTargetDate(
     ignore_capacity_constraints: true,
   };
 
-  console.log(`[Jobman] PUT target-date ${taskId} → ${dateOnly}`);
+  console.log(`[Jobman] PUT target-date ${taskId} → ${dateOnly} (direction=${direction})`);
   const response = await fetchWithRetry(url, {
     method: "PUT",
     headers: await getHeaders(),
@@ -360,7 +403,15 @@ export async function updateTaskTargetDate(
   }
 
   const data = await response.json();
-  return normalizeTaskDates(data.task || data);
+  const raw = data.task || data;
+  console.log(
+    `[Jobman] PUT target-date ${taskId} RAW → start=${raw.start_date} target=${raw.target_date} (sent target=${dateOnly})`
+  );
+  const normalized = normalizeTaskDates(raw);
+  console.log(
+    `[Jobman] PUT target-date ${taskId} NORMALIZED → start=${normalized.start_date} target=${normalized.target_date}`
+  );
+  return normalized;
 }
 
 /**
@@ -385,7 +436,7 @@ export async function updateTaskStartDate(
     ignore_capacity_constraints: true,
   };
 
-  console.log(`[Jobman] PUT start-date ${taskId} → ${dateOnly}`);
+  console.log(`[Jobman] PUT start-date ${taskId} → ${dateOnly} (direction=${direction})`);
   const response = await fetchWithRetry(url, {
     method: "PUT",
     headers: await getHeaders(),
@@ -398,7 +449,15 @@ export async function updateTaskStartDate(
   }
 
   const data = await response.json();
-  return normalizeTaskDates(data.task || data);
+  const raw = data.task || data;
+  console.log(
+    `[Jobman] PUT start-date ${taskId} RAW → start=${raw.start_date} target=${raw.target_date} (sent start=${dateOnly})`
+  );
+  const normalized = normalizeTaskDates(raw);
+  console.log(
+    `[Jobman] PUT start-date ${taskId} NORMALIZED → start=${normalized.start_date} target=${normalized.target_date}`
+  );
+  return normalized;
 }
 
 export { getJobDisplayName };

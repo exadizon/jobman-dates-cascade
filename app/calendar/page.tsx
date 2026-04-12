@@ -75,6 +75,13 @@ interface CascadeStepResult {
   error?: string;
   dateSet?: string;
   direction?: string;
+  jobNumber?: string;
+  taskName?: string;
+  returnedStart?: string | null;
+  returnedTarget?: string | null;
+  drift?: string;
+  freshStart?: string | null;
+  freshTarget?: string | null;
 }
 
 // ─── Task Type Config ──────────────────────────────────────────
@@ -288,6 +295,7 @@ function CalendarContent() {
   const [error, setError] = useState<string | null>(null);
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [showDebug, setShowDebug] = useState(false);
+  const isDebugMode = searchParams.get("debug") === "1";
 
   const [activeTaskTypes, setActiveTaskTypes] = useState<Set<TaskType>>(
     () => new Set<TaskType>(["site_measure", "primary_install", "worktop_install", "final_fit_off", "cut_from_machining", "pallet_collected"])
@@ -1351,6 +1359,19 @@ function CalendarContent() {
                   <p className="text-sm font-medium text-gray-800">{r.description}</p>
                   {r.dateSet && r.dateSet !== "skipped — no next task or no finish date on anchor" && (
                     <p className="text-xs text-gray-500 mt-0.5">→ {formatShortDate(parseYMD(r.dateSet))} ({r.direction})</p>
+                  )}
+                  {isDebugMode && r.success && (
+                    <div className="mt-1 space-y-0.5 font-mono text-[10px] text-gray-600">
+                      {r.drift && r.drift !== "ok" && (
+                        <p className="text-red-600 font-semibold">drift {r.drift}</p>
+                      )}
+                      {r.returnedStart !== undefined && (
+                        <p>sent={r.dateSet} ret_start={r.returnedStart ?? "—"} ret_target={r.returnedTarget ?? "—"}</p>
+                      )}
+                      {r.freshStart !== undefined && r.freshStart !== null && (
+                        <p>fresh_start={r.freshStart} fresh_target={r.freshTarget ?? "—"}</p>
+                      )}
+                    </div>
                   )}
                   {!r.success && r.error && <p className="text-xs text-red-600 mt-0.5">{r.error}</p>}
                 </div>

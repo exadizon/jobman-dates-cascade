@@ -6,6 +6,8 @@ import {
   getRelatedJobs,
   updateTaskStartDate,
   updateTaskTargetDate,
+  lockTaskTargetDate,
+  unlockTaskTargetDate,
   filterWorkOrders,
 } from "@/lib/jobman";
 import type { JobTask } from "@/lib/jobman";
@@ -32,6 +34,25 @@ interface CascadeStepResult {
   taskName?: string;
   dateSet?: string;
   direction?: string;
+  returnedStart?: string | null;
+  returnedTarget?: string | null;
+  drift?: string;
+  freshStart?: string | null;
+  freshTarget?: string | null;
+}
+
+function dayDiff(a: string, b: string): number {
+  const da = new Date(a + "T00:00:00Z").getTime();
+  const db = new Date(b + "T00:00:00Z").getTime();
+  return Math.round((db - da) / 86_400_000);
+}
+
+function driftLabel(sent: string, returned: string | null | undefined): string | undefined {
+  if (!returned) return undefined;
+  const r = returned.split("T")[0];
+  if (r === sent) return "ok";
+  const d = dayDiff(sent, r);
+  return `${d > 0 ? "+" : ""}${d}d`;
 }
 
 /**
@@ -74,7 +95,9 @@ export async function POST(request: NextRequest) {
 
     let step1Result: CascadeStepResult;
     try {
-      await updateTaskStartDate(jobId, anchorTaskId, newStartDate, "none");
+      const anchorAfter = await updateTaskStartDate(jobId, anchorTaskId, newStartDate, "none");
+      const returnedStart = parseJobmanDate(anchorAfter.start_date);
+      const returnedTarget = parseJobmanDate(anchorAfter.target_date);
       step1Result = {
         step: 1,
         description: "Pin anchor task start date (no cascade)",
@@ -83,7 +106,13 @@ export async function POST(request: NextRequest) {
         taskId: anchorTaskId,
         dateSet: newStartDate,
         direction: "none",
+        returnedStart,
+        returnedTarget,
+        drift: driftLabel(newStartDate, returnedStart),
       };
+      console.log(
+        `[SmartCascade] Step 1a DRIFT check: sent=${newStartDate} returned_start=${returnedStart} returned_target=${returnedTarget} drift=${step1Result.drift}`
+      );
     } catch (error) {
       step1Result = {
         step: 1,
@@ -99,6 +128,19 @@ export async function POST(request: NextRequest) {
         steps: results,
         summary: { total: 1, success: 0, failed: 1 },
       });
+    }
+
+    // ─── Step 1a-lock: Lock anchor's target_date to prevent Jobman auto-recalculation ───
+    // Jobman's target_date_calculation offsets cause it to recalculate task dates
+    // whenever a cascade event fires on the same job. Locking the anchor prevents
+    // Steps 1b, 2, and 3 from snapping it to a recalculated offset date.
+    let anchorLocked = false;
+    try {
+      await lockTaskTargetDate(jobId, anchorTaskId);
+      anchorLocked = true;
+      console.log(`[SmartCascade] Step 1a-lock: Locked anchor ${anchorTaskId} target_date`);
+    } catch (lockError) {
+      console.warn(`[SmartCascade] Step 1a-lock WARN: Could not lock anchor — ${lockError instanceof Error ? lockError.message : lockError}. Continuing anyway.`);
     }
 
     // ─── Step 1b: Reverse cascade from the task immediately before the anchor ───
@@ -117,7 +159,18 @@ export async function POST(request: NextRequest) {
       console.log(`[SmartCascade] Step 1b: Reverse cascade from "${taskBefore.name}" with target_date = ${dayBefore}`);
 
       try {
-        await updateTaskTargetDate(jobId, taskBefore.id, dayBefore, "before");
+        const after = await updateTaskTargetDate(jobId, taskBefore.id, dayBefore, "before");
+        const returnedStart = parseJobmanDate(after.start_date);
+        const returnedTarget = parseJobmanDate(after.target_date);
+
+        // H2 check: did the anchor shift because of this cascade?
+        const postAnchorSteps = await getJobSteps(jobId);
+        const postAnchor = postAnchorSteps.flatMap((s) => s.tasks || []).find((t) => t.id === anchorTaskId);
+        const anchorStartNow = postAnchor ? parseJobmanDate(postAnchor.start_date) : null;
+        console.log(
+          `[SmartCascade] Step 1b DRIFT check: sent_target=${dayBefore} returned_start=${returnedStart} returned_target=${returnedTarget} anchor_start_now=${anchorStartNow} (expected ${newStartDate})`
+        );
+
         results.push({
           step: 1,
           description: `Reverse cascade from "${taskBefore.name}" (all tasks before)`,
@@ -127,6 +180,10 @@ export async function POST(request: NextRequest) {
           taskName: taskBefore.name,
           dateSet: dayBefore,
           direction: "before",
+          returnedStart,
+          returnedTarget,
+          drift: driftLabel(dayBefore, returnedTarget),
+          freshStart: anchorStartNow,
         });
       } catch (error) {
         results.push({
@@ -171,7 +228,18 @@ export async function POST(request: NextRequest) {
       console.log(`[SmartCascade] Step 2: Setting ${nextTask.name} start_date = ${anchorFinishDate} (anchor finish date)`);
 
       try {
-        await updateTaskStartDate(jobId, nextTask.id, anchorFinishDate, "after");
+        const after = await updateTaskStartDate(jobId, nextTask.id, anchorFinishDate, "after");
+        const returnedStart = parseJobmanDate(after.start_date);
+        const returnedTarget = parseJobmanDate(after.target_date);
+
+        // H2 check: did the anchor shift because of this cascade?
+        const postAnchorSteps = await getJobSteps(jobId);
+        const postAnchor = postAnchorSteps.flatMap((s) => s.tasks || []).find((t) => t.id === anchorTaskId);
+        const anchorStartNow = postAnchor ? parseJobmanDate(postAnchor.start_date) : null;
+        console.log(
+          `[SmartCascade] Step 2 DRIFT check: sent_start=${anchorFinishDate} returned_start=${returnedStart} returned_target=${returnedTarget} anchor_start_now=${anchorStartNow} (expected ${newStartDate})`
+        );
+
         results.push({
           step: 2,
           description: `Forward cascade from "${nextTask.name}" (all tasks after)`,
@@ -181,6 +249,10 @@ export async function POST(request: NextRequest) {
           taskName: nextTask.name,
           dateSet: anchorFinishDate,
           direction: "after",
+          returnedStart,
+          returnedTarget,
+          drift: driftLabel(anchorFinishDate, returnedStart),
+          freshStart: anchorStartNow,
         });
       } catch (error) {
         results.push({
@@ -240,7 +312,24 @@ export async function POST(request: NextRequest) {
 
         console.log(`[SmartCascade] Step 3: WO ${wo.number} — setting "${lastTask.name}" start_date = ${newStartDate}`);
 
-        await updateTaskStartDate(wo.id, lastTask.id, newStartDate, "before");
+        const after = await updateTaskStartDate(wo.id, lastTask.id, newStartDate, "before");
+        const returnedStart = parseJobmanDate(after.start_date);
+        const returnedTarget = parseJobmanDate(after.target_date);
+
+        // H5 check: re-fetch WO last task to see if Jobman finalised at a different date
+        let freshStart: string | null = null;
+        let freshTarget: string | null = null;
+        try {
+          const freshSteps = await getJobSteps(wo.id);
+          const freshTask = freshSteps.flatMap((s) => s.tasks || []).find((t) => t.id === lastTask.id);
+          if (freshTask) {
+            freshStart = parseJobmanDate(freshTask.start_date);
+            freshTarget = parseJobmanDate(freshTask.target_date);
+          }
+        } catch { /* ignore */ }
+        console.log(
+          `[SmartCascade] Step 3 DRIFT check: WO=${wo.number} sent=${newStartDate} returned_start=${returnedStart} fresh_start=${freshStart} drift=${driftLabel(newStartDate, returnedStart)} fresh_drift=${driftLabel(newStartDate, freshStart)}`
+        );
 
         results.push({
           step: 3,
@@ -252,6 +341,11 @@ export async function POST(request: NextRequest) {
           taskName: lastTask.name,
           dateSet: newStartDate,
           direction: "before",
+          returnedStart,
+          returnedTarget,
+          drift: driftLabel(newStartDate, returnedStart),
+          freshStart,
+          freshTarget,
         });
       } catch (error) {
         results.push({
@@ -262,6 +356,16 @@ export async function POST(request: NextRequest) {
           jobNumber: wo.number,
           error: error instanceof Error ? error.message : "Unknown error",
         });
+      }
+    }
+
+    // ─── Unlock anchor so future cascades can still move it ───
+    if (anchorLocked) {
+      try {
+        await unlockTaskTargetDate(jobId, anchorTaskId);
+        console.log(`[SmartCascade] Unlocked anchor ${anchorTaskId} target_date`);
+      } catch (unlockError) {
+        console.warn(`[SmartCascade] WARN: Could not unlock anchor — ${unlockError instanceof Error ? unlockError.message : unlockError}`);
       }
     }
 
